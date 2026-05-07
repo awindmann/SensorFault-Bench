@@ -3,6 +3,29 @@
 SensorFault-Bench contains the benchmark code for training forecasting
 models and evaluating them under sensor-fault perturbations.
 
+## Dataset Collection
+
+SensorFault-Bench evaluates four benchmark datasets under one sensor-fault
+robustness protocol:
+
+- `BeijingAir_Tiantan`: derived Beijing Air Tiantan PM2.5 time series record,
+  published at
+  <https://www.kaggle.com/datasets/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset>.
+- `Penmanshiel_Hourly_WT08`: derived Penmanshiel WT08 hourly SCADA time series
+  record, published at
+  <https://www.kaggle.com/datasets/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset>.
+- `ETTh1`: existing ETT benchmark dataset, acquired from the public ETT source
+  at <https://github.com/zhouhaoyi/ETDataset/tree/main/ETT-small>.
+- `traffic`: existing Traffic benchmark dataset, acquired from the public
+  upstream CSV at
+  <https://huggingface.co/datasets/thuml/Time-Series-Library/blob/main/traffic/traffic.csv>
+  and converted to the benchmark Parquet runtime format.
+
+The two derived Kaggle records are licensed under CC BY-SA 4.0 and have
+separate Croissant metadata records. Detailed source terms, expected filenames,
+access paths, and validation commands are specified in
+[`data/README.md`](data/README.md).
+
 ## Benchmark Workflow
 
 The benchmark entry points are:
