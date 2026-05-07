@@ -1,0 +1,36 @@
+pipeline_id: "arl_alo{rloss_alpha_lo}_ainit{rloss_alpha_init}_slo{rloss_scale_lo}_sinit{rloss_scale_init}"
+pipeline_method: "adaptive_robust_loss"
+pipeline_kind: "train"
+
+recipe_params:
+  # Barron's paper/repo suggest tuning how aggressively alpha can move toward
+  # heavy tails, and his reference repo explicitly warns that the scale floor
+  # and scale zero-point can have outsized optimization impact.
+  rloss_alpha_lo:
+    default: 0.001
+    grid: [0.001, 0.25, 0.5]
+  rloss_alpha_hi:
+    default: 1.999
+  rloss_alpha_init:
+    default: 1.0
+    grid: [1.0, 1.5, 1.9]
+  rloss_scale_lo:
+    default: 0.00001
+    grid: [0.00001, 0.001, 0.01]
+  rloss_scale_init:
+    default: 1.0
+    grid: [0.1, 1.0]
+  rloss_param_scope:
+    default: "per_horizon_feature"
+
+model_kwargs:
+  loss: "AdaptiveRobustLoss"
+  rloss_alpha_lo: "{rloss_alpha_lo}"
+  rloss_alpha_hi: "{rloss_alpha_hi}"
+  rloss_alpha_init: "{rloss_alpha_init}"
+  rloss_scale_lo: "{rloss_scale_lo}"
+  rloss_scale_init: "{rloss_scale_init}"
+  rloss_param_scope: "{rloss_param_scope}"
+
+model_hparams:
+  mode: "inherit_baseline"

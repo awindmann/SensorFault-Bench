@@ -1,0 +1,55 @@
+# configs/baseline_hparams.yaml
+# Hyperparameter search space for each benchmark model architecture.
+
+PatchTST:
+  d_model: [16, 128]
+  d_ff: [128, 256]
+  n_layers_enc: [2, 3]
+  n_heads: [4, 8]
+  patch_len: [8, 16]
+  stride: [4, 8]
+  dropout: [0.1, 0.3]
+  factor: [1]
+  activation: ["gelu"]
+  lr: [0.001, 0.0005, 0.0001]
+
+GRU:
+  d_hidden: [64, 128, 256, 512]
+  n_layers: [1, 2]
+  autoregressive: [false, true]
+  dropout: [0, 0.1]
+  lr: [0.001, 0.0001, 0.0005]
+
+DLinear:
+  moving_avg: [9, 13, 17, 21, 25, 29, 33]
+  individual: [false, true]
+  init_weights: [false, true]
+  lr: [0.001, 0.0001, 0.0005]
+
+SeasonalNaive:
+  season_length: [1, 2, 3, 6, 12, 16, 24, 36, 48, 90]
+
+Chronos2:
+  chronos_model_id: ["amazon/chronos-2"]
+  chronos_model_revision: ["0f8a440441931157957e2be1a9bce66627d99c76"]
+
+ModernTCN:
+  d_model: [64, 128]
+  num_blocks: [1, 2]
+  large_size: [31, 51]
+  small_size: [5]
+  ffn_ratio: [1, 4]
+  patch_size: [8]
+  patch_stride: [4]
+  dropout: [0.1, 0.3]
+  head_dropout: [0.0, 0.1]
+  individual: [false]
+  lr: [0.001, 0.0005, 0.0001]
+
+TSMixer:
+  n_block: [2, 4, 8]
+  ff_dim: [64, 128, 256]
+  norm_type: ["L", "B"]
+  activation: ["relu", "gelu"]
+  dropout: [0, 0.1, 0.3]
+  lr: [0.001, 0.0005, 0.0001]

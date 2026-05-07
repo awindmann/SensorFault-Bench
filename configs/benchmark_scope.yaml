@@ -1,0 +1,118 @@
+# configs/benchmark_scope.yaml
+# Benchmark display and applicability contract.
+#
+# Runtime membership still belongs to configs/defaults.yaml and recipe/model
+# registries. This manifest records reporting labels, display order, and
+# method/architecture applicability.
+
+schema_version: 1
+
+datasets:
+  display_order:
+    - BeijingAir_Tiantan
+    - Penmanshiel_Hourly_WT08
+    - ETTh1
+    - traffic
+  display_labels:
+    BeijingAir_Tiantan: "Beijing Air Tiantan"
+    Penmanshiel_Hourly_WT08: "Penmanshiel WT08"
+    ETTh1: "ETTh1"
+    traffic: "Traffic"
+
+architectures:
+  display_order:
+    - DLinear
+    - GRU
+    - ModernTCN
+    - PatchTST
+    - TSMixer
+    - SeasonalNaive
+    - Chronos2
+  display_labels:
+    DLinear: "DLinear"
+    GRU: "GRU"
+    ModernTCN: "ModernTCN"
+    PatchTST: "PatchTST"
+    TSMixer: "TSMixer"
+    SeasonalNaive: "Seasonal Naive"
+    Chronos2: "Chronos-2"
+  roles:
+    method_comparison:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+    baseline_only_reference:
+      - SeasonalNaive
+      - Chronos2
+
+methods:
+  display_order:
+    - baseline
+    - adversarial_training
+    - ensemble
+    - randomized_training
+    - randomized_smoothing
+    - adaptive_robust_loss
+    - revin
+    - fault_augmentation
+  display_labels:
+    baseline: "Baseline"
+    adversarial_training: "PGD adversarial training"
+    ensemble: "Ensemble"
+    randomized_training: "Randomized training"
+    randomized_smoothing: "Randomized smoothing"
+    adaptive_robust_loss: "Adaptive robust loss"
+    revin: "RevIN"
+    fault_augmentation: "Fault augmentation"
+  method_architecture_applicability:
+    baseline:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+      - SeasonalNaive
+      - Chronos2
+    adversarial_training:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+    ensemble:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+    randomized_training:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+    randomized_smoothing:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+    adaptive_robust_loss:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer
+    revin:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - TSMixer
+    fault_augmentation:
+      - DLinear
+      - GRU
+      - ModernTCN
+      - PatchTST
+      - TSMixer

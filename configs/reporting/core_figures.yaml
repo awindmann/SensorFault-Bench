@@ -1,0 +1,47 @@
+# configs/reporting/core_figures.yaml
+# Reporting-only registry for core benchmark figure ordering, labels, and
+# swappable figure-selection policy.
+
+BASELINE_RANK_PARETO_METRIC: D_w
+CORE_IMPROVEMENT_TRAJECTORY_METHOD: adversarial_training
+CORE_IMPROVEMENT_TRAJECTORY_METRIC: D_w
+
+CORE_FIGURE_DATASET_SPEC:
+  - "BeijingAir_Tiantan=Beijing Air Tiantan"
+  - "Penmanshiel_Hourly_WT08=Penmanshiel WT08"
+  - "ETTh1=ETTh1"
+  - "traffic=Traffic"
+
+CORE_METHOD_DISPLAY:
+  - "adversarial_training=PGD adversarial training"
+  - "ensemble=Ensemble"
+  - "randomized_training=Randomized training"
+  - "randomized_smoothing=Randomized smoothing"
+  - "adaptive_robust_loss=Adaptive robust loss"
+  - "revin=RevIN"
+  - "fault_augmentation=Fault augmentation"
+
+CORE_SCENARIO_DISPLAY_ORDER:
+  - "drift"
+  - "attenuation"
+  - "noise"
+  - "spike"
+  - "time_stretch"
+  - "time_compress"
+  - "stuck_sensor"
+  - "missing_data"
+
+CORE_SCENARIO_DISPLAY:
+  - "drift=Drift"
+  - "attenuation=Attenuation"
+  - "noise=Noise"
+  - "spike=Spike"
+  - "time_stretch=TimeStretch"
+  - "time_compress=TimeCompress"
+  - "stuck_sensor=StuckSensor"
+  - "missing_data=MissingData"
+
+CORE_SCENARIO_GROUPS:
+  - "Value=drift,attenuation,noise,spike"
+  - "Timing=time_stretch,time_compress"
+  - "Availability=stuck_sensor,missing_data"

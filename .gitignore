@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local data and runtime state
+/data/raw/
+/data/processed/
+logs/
+runs/
+/reports/
+
+# Generated artifacts
+*.ckpt
+*.pdf
+!/paper_artifact/R/figures/
+!/paper_artifact/R/figures/*.pdf
+*.tar.gz
+*.tar.zst
+*.zip
+/config/meta_analysis_args.yaml
+/figures/
+/tables/
+
+# Optional R paper-figure local state
+/paper_artifact/R/library/
+/paper_artifact/R/figures/*.aux
+/paper_artifact/R/figures/*.log
+/paper_artifact/R/figures/*.tex
+/paper_artifact/R/figures/*_cropped.pdf
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Workspace state
+.idea/
+.vscode/
+
+# Local tool and OS files
+poetry.toml
+.DS_Store

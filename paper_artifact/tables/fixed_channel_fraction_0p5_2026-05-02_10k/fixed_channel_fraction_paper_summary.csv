@@ -1,0 +1,5 @@
+dataset,spearman_rho,weakest_family_agreement,core_method_sign_agreement
+BeijingAir_Tiantan,1.0,7/7,3/3
+ETTh1,0.9642857142857145,7/7,3/3
+Penmanshiel_Hourly_WT08,1.0,7/7,3/3
+traffic,0.8571428571428573,7/7,3/3

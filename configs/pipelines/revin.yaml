@@ -1,0 +1,24 @@
+# Reversible Instance Normalization (RevIN) train-kind improvement.
+# RevIN is applied inside the model: normalize inputs and denormalize outputs.
+# Reference: Kim et al., 2021
+# Paper: https://openreview.net/forum?id=cGDAkQo1C0p
+# Repo: https://github.com/ts-kim/RevIN
+pipeline_id: "revin_affine{revin_affine}_eps{revin_eps}"
+pipeline_method: "revin"
+pipeline_kind: "train"
+
+recipe_params:
+  revin_affine:
+    default: true
+    grid: [true, false]
+  revin_eps:
+    default: 1e-5
+
+model_kwargs:
+  use_revin: true
+  revin_affine: "{revin_affine}"
+  revin_eps: "{revin_eps}"
+
+model_hparams:
+  # mode: "baseline_grid"
+  mode: "inherit_baseline"

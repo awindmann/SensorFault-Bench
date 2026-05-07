@@ -1,0 +1,26 @@
+# configs/pipelines/randomized_smoothing.yaml
+# Post-hoc randomized smoothing wrapper with additive Gaussian input noise
+# and alpha-trimmed aggregation.
+# Reference: Rekavandi et al., 2024
+# Paper: https://proceedings.neurips.cc/paper_files/paper/2024/hash/f21a76d688be0553c943a6b6c1d4bb1f-Abstract-Conference.html
+# Repo: https://github.com/arekavandi/Certified_adv_RRegression
+pipeline_id: "rs_backbone{rs_backbone_method}_std{rs_noise_std}_samples{rs_sample_count}_alpha{rs_trim_alpha}"
+pipeline_method: "randomized_smoothing"
+pipeline_kind: "wrap"
+
+recipe_params:
+  rs_noise_std:
+    default: 0.5
+    grid: [0.25, 0.5, 1.0]
+  rs_sample_count:
+    default: 10
+    grid: [10, 20, 30]
+  rs_backbone_method:
+    default: "baseline"
+    grid: ["baseline"]  # "randomized_training"
+  rs_trim_alpha:
+    default: 0.35
+    grid: [0.25, 0.35, 0.45]
+
+model_hparams:
+  mode: "inherit_baseline"

@@ -1,0 +1,33 @@
+# Train-time masked L_inf PGD adversarial training on standardized inputs.
+# Reference: Madry et al., 2018
+# Paper: https://openreview.net/forum?id=rJzIBfZAb
+# Repo: https://github.com/MadryLab/mnist_challenge
+pipeline_id: "advtrain_eps{advtrain_epsilon}_steps{advtrain_attack_steps}_alpha{advtrain_step_size}_channels{advtrain_attack_channels}"
+pipeline_method: "adversarial_training"
+pipeline_kind: "train"
+
+recipe_params:
+  advtrain_epsilon:
+    default: 0.1
+    grid: [0.05, 0.1, 0.2]
+  advtrain_step_size:
+    default: 0.02
+  advtrain_attack_steps:
+    default: 5
+    grid: [3, 5, 7]
+  advtrain_random_start:
+    default: true
+  advtrain_attack_channels:
+    default: "all"
+    grid: ["all"]
+
+model_kwargs:
+  adversarial_training_mode: "pgd_linf"
+  advtrain_epsilon: "{advtrain_epsilon}"
+  advtrain_step_size: "{advtrain_step_size}"
+  advtrain_attack_steps: "{advtrain_attack_steps}"
+  advtrain_random_start: "{advtrain_random_start}"
+  advtrain_attack_channels: "{advtrain_attack_channels}"
+
+model_hparams:
+  mode: "inherit_baseline"

@@ -1,0 +1,19 @@
+# configs/pipelines/ensemble.yaml
+# Post-hoc ensemble wrap improvement configuration.
+pipeline_id: "ensemble_top{ensemble_top_k}_{ensemble_combine_method}"
+pipeline_method: "ensemble"
+pipeline_kind: "wrap"
+
+recipe_params:
+  ensemble_top_k:
+    default: 3
+    grid: [3, 5, 7, 10]
+  ensemble_combine_method:
+    default: "median"
+    grid: ["median", "mean"]
+  ensemble_scope:
+    default: "per_architecture"
+    grid: ["per_architecture"]
+
+model_hparams:
+  mode: "inherit_baseline"

@@ -1,0 +1,1218 @@
+{
+  "artifact_id": "sensorfault-bench-neurips2026-paper-artifact-v1",
+  "artifact_version": 1,
+  "built_at_utc": "2026-05-06T21:31:28+00:00",
+  "compute_accounting": {
+    "duration_unit_note": "Single-MIG-device hours under the one-device-per-job execution model.",
+    "files": [
+      {
+        "path": "evidence/compute_accounting/compute_aggregates.csv",
+        "role": "compute-accounting evidence file",
+        "sha256": "349872c8ab8c6c3e73de5676f86a3601e6e0f1357bd80941832d0ac854ef3dff",
+        "size_bytes": 4757
+      },
+      {
+        "path": "evidence/compute_accounting/compute_ledger_official_runs.csv",
+        "role": "compute-accounting evidence file",
+        "sha256": "464b025a79003d469d6ccf4339272f8d5a8e1712f4e147b453e82098f53c6561",
+        "size_bytes": 1011544
+      },
+      {
+        "path": "evidence/compute_accounting/compute_overhead_audit.csv",
+        "role": "compute-accounting evidence file",
+        "sha256": "8a1df134865ba88305c25b306e91d1ca4f9dd7d8b5a69c319931d4a2ab1cdcf1",
+        "size_bytes": 1533485
+      }
+    ],
+    "ledger_script": "scripts/compute_accounting_ledger.py",
+    "official_duration_hours": 640.561064,
+    "official_ledger_rows": 2400,
+    "official_unique_run_ids": 2276,
+    "overhead_duration_hours": 1073.940897,
+    "overhead_rows": 5964,
+    "overhead_unique_run_ids": 5964,
+    "root": "../evidence/compute_accounting"
+  },
+  "data_config_signatures": {
+    "BeijingAir_Tiantan": [
+      "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+    ],
+    "ETTh1": [
+      "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+    ],
+    "Penmanshiel_Hourly_WT08": [
+      "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+    ],
+    "traffic": [
+      "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+    ]
+  },
+  "dataset_scope": [
+    "Penmanshiel_Hourly_WT08",
+    "BeijingAir_Tiantan",
+    "ETTh1",
+    "traffic"
+  ],
+  "derived_paper_inputs": [
+    {
+      "derivation_script": "scripts/generate_paper_figure_csvs.py",
+      "path": "paper_inputs/backbone_scenario_heatmap_data.csv",
+      "role": "derived paper input for the baseline scenario heatmap",
+      "row_count": 224,
+      "sha256": "6077575325702c70d3c258cdaa5dfd24c7c993090570aef26101395817eb75bb",
+      "size_bytes": 81368,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_paths": [
+        "tables/primary_clean_2026-04-26_10k/analysis.csv",
+        "tables/primary_clean_2026-04-26_10k/scenario_summary.csv"
+      ],
+      "source_tables": [
+        "analysis.csv",
+        "scenario_summary.csv"
+      ]
+    },
+    {
+      "derivation_script": "scripts/generate_paper_figure_csvs.py",
+      "path": "paper_inputs/main_table_backbone.csv",
+      "role": "derived paper input for the baseline architecture table",
+      "row_count": 28,
+      "sha256": "3299ebde1d2ff3654bcda7911a33527b29df4ebfa2df4f89fc35b9b2e739c729",
+      "size_bytes": 8790,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_paths": [
+        "tables/primary_clean_2026-04-26_10k/analysis.csv"
+      ],
+      "source_tables": [
+        "analysis.csv"
+      ]
+    },
+    {
+      "derivation_script": "scripts/generate_paper_figure_csvs.py",
+      "path": "paper_inputs/pgd_trajectory_data.csv",
+      "role": "derived paper input for the PGD trajectory plot",
+      "row_count": 20,
+      "sha256": "13c4ab59c6851a085a8ad933280a95552a33eb340cc50abb99ebe1bb21b8c146",
+      "size_bytes": 12778,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_paths": [
+        "tables/primary_clean_2026-04-26_10k/analysis.csv",
+        "tables/primary_clean_2026-04-26_10k/improvement_deltas_selected.csv"
+      ],
+      "source_tables": [
+        "analysis.csv",
+        "improvement_deltas_selected.csv"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "role": "paper artifact documentation",
+      "sha256": "098c2c1838e12d235926ddaa684b82753fa4ef861fe94f29796298393edbf8dc",
+      "size_bytes": 1966
+    },
+    {
+      "path": "config/eval_context.json",
+      "role": "public-safe source evaluation context",
+      "sha256": "7199b25cab5ad40feb48d38a22cdff565e062a1b72a01a89ed04f1cd7a39aca0",
+      "size_bytes": 14742
+    },
+    {
+      "path": "forecast_examples/manifest.json",
+      "role": "curated qualitative forecast-example sample manifest",
+      "sha256": "22eb0965e64301f6bba4f348a283930d5a072a50ec21f1804c17df70a9ebadd9",
+      "size_bytes": 5416
+    },
+    {
+      "derivation_script": "scripts/generate_paper_figure_csvs.py",
+      "path": "paper_inputs/backbone_scenario_heatmap_data.csv",
+      "role": "derived paper input for the baseline scenario heatmap",
+      "row_count": 224,
+      "sha256": "6077575325702c70d3c258cdaa5dfd24c7c993090570aef26101395817eb75bb",
+      "size_bytes": 81368,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_paths": [
+        "tables/primary_clean_2026-04-26_10k/analysis.csv",
+        "tables/primary_clean_2026-04-26_10k/scenario_summary.csv"
+      ],
+      "source_tables": [
+        "analysis.csv",
+        "scenario_summary.csv"
+      ]
+    },
+    {
+      "derivation_script": "scripts/generate_paper_figure_csvs.py",
+      "path": "paper_inputs/main_table_backbone.csv",
+      "role": "derived paper input for the baseline architecture table",
+      "row_count": 28,
+      "sha256": "3299ebde1d2ff3654bcda7911a33527b29df4ebfa2df4f89fc35b9b2e739c729",
+      "size_bytes": 8790,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_paths": [
+        "tables/primary_clean_2026-04-26_10k/analysis.csv"
+      ],
+      "source_tables": [
+        "analysis.csv"
+      ]
+    },
+    {
+      "derivation_script": "scripts/generate_paper_figure_csvs.py",
+      "path": "paper_inputs/pgd_trajectory_data.csv",
+      "role": "derived paper input for the PGD trajectory plot",
+      "row_count": 20,
+      "sha256": "13c4ab59c6851a085a8ad933280a95552a33eb340cc50abb99ebe1bb21b8c146",
+      "size_bytes": 12778,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_paths": [
+        "tables/primary_clean_2026-04-26_10k/analysis.csv",
+        "tables/primary_clean_2026-04-26_10k/improvement_deltas_selected.csv"
+      ],
+      "source_tables": [
+        "analysis.csv",
+        "improvement_deltas_selected.csv"
+      ]
+    },
+    {
+      "path": "tables/eval_seed_0_2026-04-30_10k/analysis.csv",
+      "role": "baseline architecture and selected winner diagnostics",
+      "sha256": "6e97c4ff9a323421fb2dbad327c2cd02b7b3fac1146c22ce7a3a883437d573db",
+      "size_bytes": 24020,
+      "source_id": "eval_seed_0_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed0/tables/analysis.csv",
+      "table_pool": "winner-only"
+    },
+    {
+      "path": "tables/eval_seed_0_2026-04-30_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "85b9432c74355cd081742ceb18ec80d94314d93d6273e8e1148df09cc7568c97",
+      "size_bytes": 147991,
+      "source_id": "eval_seed_0_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed0/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/eval_seed_0_2026-04-30_10k/improvement_deltas_selected.csv",
+      "role": "selected method-baseline architecture pairs",
+      "sha256": "473b24aebe2c790e289b7bbd97f503a67c35c8bdc4b14cdd0e6fd78fa827be8f",
+      "size_bytes": 217208,
+      "source_id": "eval_seed_0_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed0/tables/improvement_deltas_selected.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_0_2026-04-30_10k/pipeline_method_delta_results.csv",
+      "role": "dataset-level method-baseline delta table",
+      "sha256": "e5f0afb9e69b2f0a7f74bae5f6fdd8696a8f58779046ad8763b8036d2536f9d8",
+      "size_bytes": 11833,
+      "source_id": "eval_seed_0_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed0/tables/pipeline_method_delta_results.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_1_2026-04-30_10k/analysis.csv",
+      "role": "baseline architecture and selected winner diagnostics",
+      "sha256": "4f6f53736b2dd0c59d12a5296fd8a50bd3b1e51ade8c162143c5b616a1b49165",
+      "size_bytes": 24029,
+      "source_id": "eval_seed_1_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed1/tables/analysis.csv",
+      "table_pool": "winner-only"
+    },
+    {
+      "path": "tables/eval_seed_1_2026-04-30_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "5117a3d740463d40b12bf4f985d01a6a8d13e836a772fe828190db3f4e3bff7d",
+      "size_bytes": 148034,
+      "source_id": "eval_seed_1_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed1/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/eval_seed_1_2026-04-30_10k/improvement_deltas_selected.csv",
+      "role": "selected method-baseline architecture pairs",
+      "sha256": "49156e86e228eca7303e5370279fdff0b0a82cdec3c13f78f2b9f40b857ab5fb",
+      "size_bytes": 217261,
+      "source_id": "eval_seed_1_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed1/tables/improvement_deltas_selected.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_1_2026-04-30_10k/pipeline_method_delta_results.csv",
+      "role": "dataset-level method-baseline delta table",
+      "sha256": "1cee196726411b62b587739a297fd443219502d995c1591c991f19fc180aab76",
+      "size_bytes": 11831,
+      "source_id": "eval_seed_1_2026-04-30_10k",
+      "source_path": "exports/2026-04-30_seed01/artifacts_seed1/tables/pipeline_method_delta_results.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_2_2026-05-01_10k/analysis.csv",
+      "role": "baseline architecture and selected winner diagnostics",
+      "sha256": "5c3dd8a2e54f228ff0436ab7bf84053d7353edd9692f20ade9d2883b927ae227",
+      "size_bytes": 24051,
+      "source_id": "eval_seed_2_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed2/tables/analysis.csv",
+      "table_pool": "winner-only"
+    },
+    {
+      "path": "tables/eval_seed_2_2026-05-01_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "942b8398394b42d6ab706defdcf2c317e2adc05f632a62919ca16b440c7377f0",
+      "size_bytes": 148025,
+      "source_id": "eval_seed_2_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed2/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/eval_seed_2_2026-05-01_10k/improvement_deltas_selected.csv",
+      "role": "selected method-baseline architecture pairs",
+      "sha256": "68355eddbe99fb563d96c11700d04a79c579a4d19753b4bf2b8005e3282f6947",
+      "size_bytes": 217277,
+      "source_id": "eval_seed_2_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed2/tables/improvement_deltas_selected.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_2_2026-05-01_10k/pipeline_method_delta_results.csv",
+      "role": "dataset-level method-baseline delta table",
+      "sha256": "1d3bc3721e41bcac2f4d023b2a1863aeed4b5654daf0974c1978f0150d070598",
+      "size_bytes": 11842,
+      "source_id": "eval_seed_2_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed2/tables/pipeline_method_delta_results.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_3_2026-05-01_10k/analysis.csv",
+      "role": "baseline architecture and selected winner diagnostics",
+      "sha256": "9b8388002e108b951b69ca98d249fb2cbad1a7e53996b8a34a3f11b21fddc4a2",
+      "size_bytes": 24001,
+      "source_id": "eval_seed_3_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed3/tables/analysis.csv",
+      "table_pool": "winner-only"
+    },
+    {
+      "path": "tables/eval_seed_3_2026-05-01_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "b087c37d5547d04c75c49d6d0f7ec69597d20a28c4256801c6e0d05ecb5aeac6",
+      "size_bytes": 147954,
+      "source_id": "eval_seed_3_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed3/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/eval_seed_3_2026-05-01_10k/improvement_deltas_selected.csv",
+      "role": "selected method-baseline architecture pairs",
+      "sha256": "ad05f63d7b326b7283a75676c8c0c1218c93a9773ea47d5d2c586e775718eafd",
+      "size_bytes": 217044,
+      "source_id": "eval_seed_3_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed3/tables/improvement_deltas_selected.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/eval_seed_3_2026-05-01_10k/pipeline_method_delta_results.csv",
+      "role": "dataset-level method-baseline delta table",
+      "sha256": "9b5b896adf7fbfd31fe11c71ead9d33c3d7129a70ee5755d8b91a7fdfd9ebfef",
+      "size_bytes": 11830,
+      "source_id": "eval_seed_3_2026-05-01_10k",
+      "source_path": "exports/2026-05-01_seed23/artifacts_seed3/tables/pipeline_method_delta_results.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/fixed_channel_fraction_0p25_2026-05-03_10k/fixed_channel_fraction.csv",
+      "role": "fixed selected-channel-fraction sensitivity rows",
+      "sha256": "f25b2235ca9e0f8cb0d3904e144f25df69b7002c9824976ad91586653ea0035c",
+      "size_bytes": 1161637,
+      "source_id": "fixed_channel_fraction_0p25_2026-05-03_10k",
+      "source_path": "exports/2026-05-03_ch025/artifacts/tables/fixed_channel_fraction.csv",
+      "table_pool": "winner-only sensitivity rows"
+    },
+    {
+      "path": "tables/fixed_channel_fraction_0p25_2026-05-03_10k/fixed_channel_fraction_paper_summary.csv",
+      "role": "compact fixed selected-channel-fraction paper summary",
+      "sha256": "dffa73d3dde5eff9402028803ae076a19dc8150e47735fad17d6b0dd5a335389",
+      "size_bytes": 223,
+      "source_id": "fixed_channel_fraction_0p25_2026-05-03_10k",
+      "source_path": "exports/2026-05-03_ch025/artifacts/tables/fixed_channel_fraction_paper_summary.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/fixed_channel_fraction_0p25_2026-05-03_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "b872fd38293db14b8e1eba1ba81d221735ca1119ec4d7bf3ec22e51d3e6e6f35",
+      "size_bytes": 149296,
+      "source_id": "fixed_channel_fraction_0p25_2026-05-03_10k",
+      "source_path": "exports/2026-05-03_ch025/artifacts/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/fixed_channel_fraction_0p5_2026-05-02_10k/fixed_channel_fraction.csv",
+      "role": "fixed selected-channel-fraction sensitivity rows",
+      "sha256": "675c622f475a5c526d8d4b6ebff7a2129fab32b6c2c7a71181e41ca178b1e237",
+      "size_bytes": 1160740,
+      "source_id": "fixed_channel_fraction_0p5_2026-05-02_10k",
+      "source_path": "exports/2026-05-02_ch05/artifacts/tables/fixed_channel_fraction.csv",
+      "table_pool": "winner-only sensitivity rows"
+    },
+    {
+      "path": "tables/fixed_channel_fraction_0p5_2026-05-02_10k/fixed_channel_fraction_paper_summary.csv",
+      "role": "compact fixed selected-channel-fraction paper summary",
+      "sha256": "db8145586bcba248c4e0161002fa4bf91a3f2247e2c537bc53c8af00348770d1",
+      "size_bytes": 208,
+      "source_id": "fixed_channel_fraction_0p5_2026-05-02_10k",
+      "source_path": "exports/2026-05-02_ch05/artifacts/tables/fixed_channel_fraction_paper_summary.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/fixed_channel_fraction_0p5_2026-05-02_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "b872fd38293db14b8e1eba1ba81d221735ca1119ec4d7bf3ec22e51d3e6e6f35",
+      "size_bytes": 149296,
+      "source_id": "fixed_channel_fraction_0p5_2026-05-02_10k",
+      "source_path": "exports/2026-05-02_ch05/artifacts/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/analysis.csv",
+      "role": "baseline architecture and selected winner diagnostics",
+      "sha256": "0a64bcb5122c48699a7b92fce526261cb3c2002758a52a3efaa929f4d1e99b12",
+      "size_bytes": 24242,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/analysis.csv",
+      "table_pool": "winner-only"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/core_metric_deltas_long.csv",
+      "role": "long-form core metric delta table",
+      "sha256": "89320a9c0e16e6dea27e10b00c9d05ab4f6a3c1f15edb4234573b5c2c1c4be4c",
+      "size_bytes": 60909,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/core_metric_deltas_long.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/dataset_results.csv",
+      "role": "dataset-level aggregate table",
+      "sha256": "7c5972c77eaffc6c7be0cc2f00138285dfe67bf76ad7d24cb69bbc0199f283ba",
+      "size_bytes": 4460,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/dataset_results.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/figures_manifest.csv",
+      "role": "generated figure provenance index",
+      "sha256": "8ef641b7e196c80af544a02e2e65d0e2d0f65c6b0e47984e70b5ff6184536a7c",
+      "size_bytes": 44923,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/figures_manifest.csv",
+      "table_pool": "figure index"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/full_results.csv",
+      "role": "selected evaluated result pool",
+      "sha256": "7a9ff5a1f07ac777566d1e400b1bb2d52bcd663a8cdfcf699facaa8ee6838ec6",
+      "size_bytes": 148206,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/full_results.csv",
+      "table_pool": "selected full result pool"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/improvement_deltas_long.csv",
+      "role": "long-form selected method delta table",
+      "sha256": "898390f37a44aaeb23632b869afc41b16dc15f5caf74cd712f7ba98bdfc072c8",
+      "size_bytes": 153261,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/improvement_deltas_long.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/improvement_deltas_selected.csv",
+      "role": "selected method-baseline architecture pairs",
+      "sha256": "72dd596299c9e2068ebe3a7c4d9f67dacf059aedc3fe4416af97b9d910b91fa7",
+      "size_bytes": 217157,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/improvement_deltas_selected.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/method_aggregates.csv",
+      "role": "method coverage and aggregate support table",
+      "sha256": "4a8b9ec70296ec0d1a960fb9bdad209e2e7e77fcbee3a6d94ccc248c5c51e344",
+      "size_bytes": 2171,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/method_aggregates.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/model_results.csv",
+      "role": "architecture-level aggregate table",
+      "sha256": "9fb9233ee0afeddb79035f34a9ecabe799a1ed8f641dcaab64eb1568b474e24a",
+      "size_bytes": 7017,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/model_results.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/pipeline_counts.csv",
+      "role": "pipeline coverage count table",
+      "sha256": "b235aeba0a8f5e42772a500b4236a58f2070f00b0682e636b9bda26f455b86a7",
+      "size_bytes": 1871,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/pipeline_counts.csv",
+      "table_pool": "coverage summary"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/pipeline_method_delta_results.csv",
+      "role": "dataset-level method-baseline delta table",
+      "sha256": "569406aeafb100651d87b3bc09f023c55b9211b4314c24c7efe210733b7ee08d",
+      "size_bytes": 11822,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/pipeline_method_delta_results.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/pipeline_method_results.csv",
+      "role": "method-level aggregate table",
+      "sha256": "2f249ade2ebcfeada689e3a4824d6ea237f9def717864ae40d8c09630cd0c692",
+      "size_bytes": 25664,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/pipeline_method_results.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/reference_normalization_anchors.csv",
+      "role": "SeasonalNaive anchor metadata for normalized scores",
+      "sha256": "c7c3b3947729fc685638b3f8e54434882a5a428974ee317f3db2d9b8572c5d7f",
+      "size_bytes": 979,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/reference_normalization_anchors.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/rho_eff_fits.csv",
+      "role": "effective-robustness fit diagnostics",
+      "sha256": "9c0bf96380bef4a93f212bdbce531fad305054868ed734ac0cb8123087846a4a",
+      "size_bytes": 2570,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/rho_eff_fits.csv",
+      "table_pool": "aggregate"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/scenario_d_delta.csv",
+      "role": "method scenario-degradation delta table",
+      "sha256": "01d69745ef3941435411d3e6f1b1beef97d8875e59e328f25769dd654fd7d6db",
+      "size_bytes": 14958,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/scenario_d_delta.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/scenario_err_pert_delta.csv",
+      "role": "method scenario fault-time-error delta table",
+      "sha256": "e4b5408a0fd9cb44ea63bcaf49d045c212f88d21f93c4f6a0a52ef220977b4e0",
+      "size_bytes": 14910,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/scenario_err_pert_delta.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/scenario_summary.csv",
+      "role": "scenario-difficulty summary table",
+      "sha256": "f010558a61d1b9a7e58c279c3de65603d013b3008e4177051837ee02b967cb38",
+      "size_bytes": 425637,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/scenario_summary.csv",
+      "table_pool": "baseline winner scenarios"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/testing_coverage.csv",
+      "role": "tested-run coverage accounting",
+      "sha256": "a6c87866baeb0fb5105238f17ed4c69ed3701e30d268b3957663785b227d2053",
+      "size_bytes": 10133,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/testing_coverage.csv",
+      "table_pool": "coverage summary"
+    },
+    {
+      "path": "tables/primary_clean_2026-04-26_10k/variant_selection_summary.csv",
+      "role": "selected variant identity and selector audit table",
+      "sha256": "55e3da8928ae5b5fa09656635df48b5c127b1062dd52be272bd9d63614a6743b",
+      "size_bytes": 9773,
+      "source_id": "primary_clean_2026-04-26_10k",
+      "source_path": "exports/2026-04-26_clean/artifacts_clean_final_10k/tables/variant_selection_summary.csv",
+      "table_pool": "winner-only variants"
+    },
+    {
+      "path": "tables/selector_perturbed_validation_2026-04-29_10k/improvement_deltas_selected.csv",
+      "role": "selected method-baseline architecture pairs",
+      "sha256": "e9df283cf825bb9b35e49a40200139b6ab35489ddb945414fc72a322c9569035",
+      "size_bytes": 218690,
+      "source_id": "selector_perturbed_validation_2026-04-29_10k",
+      "source_path": "exports/2026-04-29_pert_val/artifacts_pert_ws_val_final_10k/tables/improvement_deltas_selected.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/selector_perturbed_validation_2026-04-29_10k/pipeline_method_delta_results.csv",
+      "role": "dataset-level method-baseline delta table",
+      "sha256": "d052f8f641b5d7fee7dd612238a5a4b35bbfdb587f43791d20ef3d67c967b791",
+      "size_bytes": 11858,
+      "source_id": "selector_perturbed_validation_2026-04-29_10k",
+      "source_path": "exports/2026-04-29_pert_val/artifacts_pert_ws_val_final_10k/tables/pipeline_method_delta_results.csv",
+      "table_pool": "winner-only method pairs"
+    },
+    {
+      "path": "tables/selector_perturbed_validation_2026-04-29_10k/variant_selection_summary.csv",
+      "role": "selected variant identity and selector audit table",
+      "sha256": "589ad0b434e653b3a9a166bddc9ee51c4346aae65b5e5d291e5f4896e3ab6197",
+      "size_bytes": 10774,
+      "source_id": "selector_perturbed_validation_2026-04-29_10k",
+      "source_path": "exports/2026-04-29_pert_val/artifacts_pert_ws_val_final_10k/tables/variant_selection_summary.csv",
+      "table_pool": "winner-only variants"
+    }
+  ],
+  "forecast_examples": {
+    "curated_figure_trace_csvs_bundled": true,
+    "full_trace_csvs_bundled": false,
+    "manifest_path": "forecast_examples/manifest.json",
+    "replay_pdfs_bundled": false,
+    "sample_count": 8,
+    "source_export_relative_path": "exports/2026-05-05_fcast/forecast_plots_final_traces",
+    "source_id": "forecast_examples_2026-05-05"
+  },
+  "improvement_selection_mode": "clean",
+  "intentional_omissions": [
+    "MLflow run stores",
+    "model checkpoints",
+    "raw datasets",
+    "processed runtime datasets",
+    "tables/scenario_samples.csv sample-level dumps",
+    "tables/forecast_extremes.csv replay-selection table",
+    "raw config/meta_analysis_args.yaml files with private storage fields",
+    "generic generated figure binaries outside paper_artifact/R/figures",
+    "R package caches and temporary TeX figure build products",
+    "full qualitative forecast trace CSV dumps outside the curated R figure extracts",
+    "forecast replay PDFs",
+    "complete historical export trees"
+  ],
+  "n_test_samples": 10000,
+  "perturbation_scenarios": [
+    "drift",
+    "attenuation",
+    "noise",
+    "spike",
+    "time_stretch",
+    "time_compress",
+    "stuck_sensor",
+    "missing_data"
+  ],
+  "primary_source_id": "primary_clean_2026-04-26_10k",
+  "r_figure_artifact": {
+    "file_count": 25,
+    "files": [
+      {
+        "path": "R/README.md",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "9429d8d2a91309184efb20698e5a9ac6963a26434e73a9c6ce88c00f2d60f25d",
+        "size_bytes": 3804
+      },
+      {
+        "path": "R/code/Figure_2_backbone_scenario_heatmap.R",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "1c3d68e408af68295cf65b940c24c642c704b5d67b12102863892ae0a8643637",
+        "size_bytes": 12314
+      },
+      {
+        "path": "R/code/Figure_3_forecast_short_term.R",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "5b57353a31cfa4f8208f373fbb3dfb4ee4f0ceadc34213b9b56f38ddacc9d2b0",
+        "size_bytes": 21134
+      },
+      {
+        "path": "R/code/Figure_4_forecast_long_term.R",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "9f5f22ddd87fc292ad4d0744ac5d8998099dfce6a8ae2b9cc7e72c938dd2463e",
+        "size_bytes": 23003
+      },
+      {
+        "path": "R/code/Figure_5_trade_off_views.R",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "2103d996059b35b112f5dff7ad6ed7a9b29375ffabac15c679ec401e14dc6b93",
+        "size_bytes": 25740
+      },
+      {
+        "path": "R/code/Figure_6_trajectories.R",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "d471234b9fbe86dda76023a399006723bee5aa951d17b83d8f36bb4ee09d7d04",
+        "size_bytes": 19680
+      },
+      {
+        "path": "R/data/backbone_scenario_heatmap_data.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "6077575325702c70d3c258cdaa5dfd24c7c993090570aef26101395817eb75bb",
+        "size_bytes": 81368
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/beijing_air/traces/drift/PatchTST_drift_sid2329_sev0.596.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "ccaf9f45f3b35dd16b77586d922f13f52b9906522ac6592cd9f34278ecfe360c",
+        "size_bytes": 181364
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/beijing_air/traces/spike/DLinear_spike_sid8609_sev0.492.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "d3b0a6f50468b11b4f822ae66e742c8665856ae6e199337ba8b1400d5f49a4c2",
+        "size_bytes": 177488
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/cli.md",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "71286c112ba5d4dd32f9f1251693ffa157f8d06d41b94c8c534de106cd46388f",
+        "size_bytes": 1376
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/etth1/traces/stuck_sensor/PatchTST_stuck_sensor_sid8111_sev0.186.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "213d9f216e5ed86d0fa9e14ce14454debae7392f9941b7fb6453305191feec76",
+        "size_bytes": 235728
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/etth1/traces/time_compress/PatchTST_time_compress_sid7968_sev0.495.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "f230cf4d34d0b26c6441d97522eb92b8463bcd675ac660b59ee7e41580d0d95c",
+        "size_bytes": 240164
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/penmanshiel/traces/attenuation/ModernTCN_attenuation_sid744_sev0.884.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "1ba568be5ab63d42fe49064f8362a965cf8331f50e6d4b1d6adb28acbf9e305f",
+        "size_bytes": 1310172
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/penmanshiel/traces/noise/PatchTST_noise_sid4638_sev0.243.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "9c373bdbd230fa78195f681d97c8c6488157ff037c73a95f5c64cd9a4cac8246",
+        "size_bytes": 1262236
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/traffic/traces/missing_data/PatchTST_missing_data_sid664_sev0.491.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "ec8887738147b2d33c97b19233e59b46e7d33299a6cb9b4891e27ef4b1a3ac87",
+        "size_bytes": 373106
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/traffic/traces/time_stretch/PatchTST_time_stretch_sid4717_sev0.492.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "a38dcc468368caf82d0444ce369d3a6eee6af667b0da6d27902e1e324c7bc083",
+        "size_bytes": 372151
+      },
+      {
+        "path": "R/data/forecast_plots_final_traces/traffic/traces/time_stretch/PatchTST_time_stretch_sid7218_sev0.494.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "46595c3a60341fb6edc7b0b74b23809ee17aefa46621be2c8a6191dc4877bc69",
+        "size_bytes": 368079
+      },
+      {
+        "path": "R/data/main_table_backbone.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "3299ebde1d2ff3654bcda7911a33527b29df4ebfa2df4f89fc35b9b2e739c729",
+        "size_bytes": 8790
+      },
+      {
+        "path": "R/data/pgd_trajectory_data.csv",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "13c4ab59c6851a085a8ad933280a95552a33eb340cc50abb99ebe1bb21b8c146",
+        "size_bytes": 12778
+      },
+      {
+        "path": "R/figures/Figure_2_backbone_scenario_heatmap.pdf",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "247bf14b41a7b6f62da06aeca1631d2435732a570eeed3a7a2a3c314bada524b",
+        "size_bytes": 64710
+      },
+      {
+        "path": "R/figures/Figure_3_forecast_short_term.pdf",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "e0b699964bf214c708f79bc9c17e69b77c4c849843818c7311e7155cb924c0e5",
+        "size_bytes": 124009
+      },
+      {
+        "path": "R/figures/Figure_4_forecast_long_term.pdf",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "9d4f6eb9d0e702f2df251bc52a2279c82a33a80637565a5f83c4a7db4aa7c631",
+        "size_bytes": 3464250
+      },
+      {
+        "path": "R/figures/Figure_5_backbone_pareto_by_dataset.pdf",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "ec6ea3abdc6354c3635935c2ebe8cb614fde3f14c487e31e741a778abd1e7e47",
+        "size_bytes": 55907
+      },
+      {
+        "path": "R/figures/Figure_5_clean_vs_worst_error_by_dataset.pdf",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "5495b4e9742b4b4afa371a39928996ab1c1f0ac1a565da2dcf36cc84439ed1b2",
+        "size_bytes": 47051
+      },
+      {
+        "path": "R/figures/Figure_6_trajectories.pdf",
+        "role": "R figure reproduction subartifact file",
+        "sha256": "2fc17df0a223c76709f6883d396acb66cc459196094506e6dca926d512ecfb8f",
+        "size_bytes": 58377
+      }
+    ],
+    "root": "R"
+  },
+  "robustness_parameters": {
+    "cvar_alpha": null,
+    "note": "The submitted degradation and fault-time-error exports do not use phi or CVaR-alpha reporting parameters.",
+    "phi": null
+  },
+  "separate_dataset_metadata_route": "Croissant JSON records for BeijingAir_Tiantan and Penmanshiel_Hourly_WT08 are uploaded through the dataset metadata route rather than bundled in this result manifest.",
+  "source_exports": [
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "1515776824",
+          "1806770612",
+          "341970080",
+          "74851880"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-04-26",
+      "fixed_channel_fraction": null,
+      "generation_command": "uv run python run_analysis.py --analysis-only --meta-analysis --data-files Penmanshiel_Hourly_WT08 BeijingAir_Tiantan ETTh1 traffic --improvement-selection-mode clean",
+      "improvement_selection_mode": "clean",
+      "role": "primary clean-selected paper evidence",
+      "source_export_relative_path": "exports/2026-04-26_clean/artifacts_clean_final_10k",
+      "source_id": "primary_clean_2026-04-26_10k",
+      "tables": [
+        "analysis.csv",
+        "full_results.csv",
+        "testing_coverage.csv",
+        "model_results.csv",
+        "dataset_results.csv",
+        "pipeline_method_results.csv",
+        "pipeline_method_delta_results.csv",
+        "improvement_deltas_selected.csv",
+        "improvement_deltas_long.csv",
+        "scenario_summary.csv",
+        "scenario_d_delta.csv",
+        "scenario_err_pert_delta.csv",
+        "variant_selection_summary.csv",
+        "pipeline_counts.csv",
+        "figures_manifest.csv",
+        "reference_normalization_anchors.csv",
+        "rho_eff_fits.csv",
+        "method_aggregates.csv",
+        "core_metric_deltas_long.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "1515776824",
+          "1806770612",
+          "341970080",
+          "74851880"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-04-29",
+      "fixed_channel_fraction": null,
+      "generation_command": "uv run python run_analysis.py --improvement-selection perturbed_worst",
+      "improvement_selection_mode": "perturbed_worst",
+      "role": "selector-pressure sensitivity evidence",
+      "source_export_relative_path": "exports/2026-04-29_pert_val/artifacts_pert_ws_val_final_10k",
+      "source_id": "selector_perturbed_validation_2026-04-29_10k",
+      "tables": [
+        "variant_selection_summary.csv",
+        "improvement_deltas_selected.csv",
+        "pipeline_method_delta_results.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "0"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-04-30",
+      "fixed_channel_fraction": null,
+      "generation_command": "uv run python run_analysis.py --eval-data-seed 0",
+      "improvement_selection_mode": "clean",
+      "role": "evaluation-data seed sensitivity evidence",
+      "source_export_relative_path": "exports/2026-04-30_seed01/artifacts_seed0",
+      "source_id": "eval_seed_0_2026-04-30_10k",
+      "tables": [
+        "analysis.csv",
+        "pipeline_method_delta_results.csv",
+        "full_results.csv",
+        "improvement_deltas_selected.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "1"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-04-30",
+      "fixed_channel_fraction": null,
+      "generation_command": "uv run python run_analysis.py --eval-data-seed 1",
+      "improvement_selection_mode": "clean",
+      "role": "evaluation-data seed sensitivity evidence",
+      "source_export_relative_path": "exports/2026-04-30_seed01/artifacts_seed1",
+      "source_id": "eval_seed_1_2026-04-30_10k",
+      "tables": [
+        "analysis.csv",
+        "pipeline_method_delta_results.csv",
+        "full_results.csv",
+        "improvement_deltas_selected.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "2"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-05-01",
+      "fixed_channel_fraction": null,
+      "generation_command": "uv run python run_analysis.py --eval-data-seed 2",
+      "improvement_selection_mode": "clean",
+      "role": "evaluation-data seed sensitivity evidence",
+      "source_export_relative_path": "exports/2026-05-01_seed23/artifacts_seed2",
+      "source_id": "eval_seed_2_2026-05-01_10k",
+      "tables": [
+        "analysis.csv",
+        "pipeline_method_delta_results.csv",
+        "full_results.csv",
+        "improvement_deltas_selected.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "3"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-05-01",
+      "fixed_channel_fraction": null,
+      "generation_command": "uv run python run_analysis.py --eval-data-seed 3",
+      "improvement_selection_mode": "clean",
+      "role": "evaluation-data seed sensitivity evidence",
+      "source_export_relative_path": "exports/2026-05-01_seed23/artifacts_seed3",
+      "source_id": "eval_seed_3_2026-05-01_10k",
+      "tables": [
+        "analysis.csv",
+        "pipeline_method_delta_results.csv",
+        "full_results.csv",
+        "improvement_deltas_selected.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "1515776824",
+          "1806770612",
+          "341970080",
+          "74851880"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-05-02",
+      "fixed_channel_fraction": 0.5,
+      "generation_command": "uv run python run_analysis.py --fixed-channel-fraction 0.5",
+      "improvement_selection_mode": "clean",
+      "role": "fixed selected-channel-fraction sensitivity evidence",
+      "source_export_relative_path": "exports/2026-05-02_ch05/artifacts",
+      "source_id": "fixed_channel_fraction_0p5_2026-05-02_10k",
+      "tables": [
+        "fixed_channel_fraction.csv",
+        "fixed_channel_fraction_paper_summary.csv",
+        "full_results.csv"
+      ]
+    },
+    {
+      "csv_metadata": {
+        "data_config_signatures": {
+          "BeijingAir_Tiantan": [
+            "4c5e0908fb1a9097c1bed37a3c29e849947e6fbd5828b63bc6ba2909525a5089"
+          ],
+          "ETTh1": [
+            "4a82efae1ffe76a156a2bf948861e2da349ef1c1c994d9f24654525f47fbf14d"
+          ],
+          "Penmanshiel_Hourly_WT08": [
+            "d379114cd53cbbe062e0e09b673d66d5a6d103c8d25daba8f040e64926c0f2d0"
+          ],
+          "traffic": [
+            "41f9af6ab1b86f6fe5ef4323c149934cbaf2f1c6c4b6bb60ffda29c7857cf618"
+          ]
+        },
+        "datasets": [
+          "BeijingAir_Tiantan",
+          "ETTh1",
+          "Penmanshiel_Hourly_WT08",
+          "traffic"
+        ],
+        "eval_data_seeds": [
+          "1515776824",
+          "1806770612",
+          "341970080",
+          "74851880"
+        ],
+        "n_test_samples": [
+          "10000"
+        ],
+        "robustness_scoring_semantics": [
+          "uniform_severity_degradation"
+        ],
+        "selection_pools": [
+          "winner_pool"
+        ],
+        "test_metrics": [
+          "MSE"
+        ]
+      },
+      "export_date": "2026-05-03",
+      "fixed_channel_fraction": 0.25,
+      "generation_command": "uv run python run_analysis.py --fixed-channel-fraction 0.25",
+      "improvement_selection_mode": "clean",
+      "role": "fixed selected-channel-fraction sensitivity evidence",
+      "source_export_relative_path": "exports/2026-05-03_ch025/artifacts",
+      "source_id": "fixed_channel_fraction_0p25_2026-05-03_10k",
+      "tables": [
+        "fixed_channel_fraction.csv",
+        "fixed_channel_fraction_paper_summary.csv",
+        "full_results.csv"
+      ]
+    }
+  ],
+  "source_repository": {
+    "git_commit": "5c825b3362845d8529c2d3cfca3a212326a57992",
+    "name": "sensorfault-bench",
+    "worktree_dirty_at_build": true
+  },
+  "test_metric": "MSE"
+}

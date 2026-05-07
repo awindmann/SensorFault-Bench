@@ -1,0 +1,22 @@
+# long-term forecasting (96/96)
+# short-term forecasting (96/6)
+
+ETTh1:
+  input_len: 96
+  target_len: 96
+  batch_size: 16
+
+traffic:
+  input_len: 96
+  target_len: 96
+  batch_size: 16
+
+Penmanshiel_Hourly_WT08:
+  input_len: 96
+  target_len: 6
+  batch_size: 64
+
+BeijingAir_Tiantan:
+  input_len: 96
+  target_len: 6
+  batch_size: 64

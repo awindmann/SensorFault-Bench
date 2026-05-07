@@ -1,0 +1,24 @@
+# configs/pipelines/randomized_training.yaml
+# Train-from-scratch with Gaussian relative-noise augmentation on inputs (randomized training).
+# Reference: Yoon et al., 2022
+# Paper: https://proceedings.mlr.press/v151/yoon22a.html
+# Repo: https://github.com/tetrzim/robust-probabilistic-forecasting
+pipeline_id: "rt_spaceraw_std{smoothing_noise_std}_channels{smoothing_noise_channels}"
+pipeline_method: "randomized_training"
+pipeline_kind: "train"
+
+recipe_params:
+  smoothing_noise_std:
+    default: 0.1
+    grid: [0.1, 0.2, 0.3]
+  smoothing_noise_channels:
+    default: "continuous"
+    grid: ["continuous"] #, "all"
+
+datamodule_kwargs:
+  train_noise_std: "{smoothing_noise_std}"
+  train_noise_channels: "{smoothing_noise_channels}"
+
+model_hparams:
+  # mode: "baseline_grid"
+  mode: "inherit_baseline"

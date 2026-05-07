@@ -1,0 +1,12 @@
+# configs/pipelines/baseline.yaml
+pipeline_id: "baseline"
+pipeline_method: "baseline"
+pipeline_kind: "train"
+
+recipe_params: {}
+
+datamodule_kwargs: {}
+model_kwargs: {}
+
+model_hparams:
+  mode: "baseline_grid"  # baseline does its own HP search

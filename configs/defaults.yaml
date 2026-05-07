@@ -1,0 +1,106 @@
+# configs/defaults.yaml
+# Default configuration values
+
+### TRAINING ARGUMENTS ###
+DATA_FILES:
+  - "Penmanshiel_Hourly_WT08"
+  - "ETTh1"
+  - "BeijingAir_Tiantan"
+  - "traffic"
+DATA_TARGETS: []
+DATA_ROOT: "data/processed"
+LOGDIR: "runs"
+MINIO_ENDPOINT: ""
+MLFLOW_EXPERIMENT_PREFIX: "test-1"
+LOG_EVERY_N_STEPS: 10
+SAVE_CHECKPOINT: true
+RERUN: false  # rerun pipelines even if prior finished runs exist
+
+MAX_EPOCHS: 200
+EARLY_STOPPING: true
+EARLY_STOPPING_PATIENCE: 10
+LR_SCHEDULER: false  # if true, ReduceLROnPlateau is used
+OPTIMIZER: "Adam"
+OPTIMIZER_BETA1: 0.9
+OPTIMIZER_BETA2: 0.999
+OPTIMIZER_WEIGHT_DECAY: 0.0
+OPTIMIZER_EPS: 0.00000001
+SCHEDULER_TYPE: "plateau"
+SCHEDULER_FACTOR: 0.5
+SCHEDULER_PATIENCE: 25
+SCHEDULER_MIN_LR: 0.00001
+N_TRAIN_SAMPLES: 10000
+N_VAL_SAMPLES: 3000
+INPUT_LEN: 96
+TARGET_LEN: 96  # overridden per-dataset by configs/dataset_windows.yaml
+TRAIN_SPLIT: 0.6
+VAL_SPLIT: 0.2
+PURGED_FRACTION: 0.0  # fraction of samples to be purged from the start of the validation and test set to avoid leakage
+SHUFFLE_BATCHES_BEFORE_SPLIT: false  # Only for split_mode=across_batches. within_batches rejects shuffle
+STRICT_IID: false  # when true, enforce non-overlapping samples via block-based sampling
+
+BATCH_SIZE: 64  # Benchmark default. Dataset-specific values are owned by configs/dataset_windows.yaml.
+PRECISION: 32
+NUM_WORKERS: 12
+ACCELERATOR: "auto"
+DEVICES: 1  # for benchmarking for research papers, use 1 device only
+SEED: 42
+DATA_SPLIT_SEED: null
+LOSS: "MSE"  # Training loss: MSE, MAE, MAPE, SMAPE
+
+# Hyperparameter Tuning
+MODEL: null  # Explicit ad-hoc CLI model scope only. Omit --model to use BENCHMARK_ARCHITECTURES.
+BENCHMARK_ARCHITECTURES:  # default benchmark architecture scope for training/testing/coverage.
+  - "DLinear"
+  - "TSMixer"
+  - "PatchTST"
+  - "GRU"
+  - "ModernTCN"
+  - "SeasonalNaive"
+  - "Chronos2"
+METHOD: null  # Explicit ad-hoc CLI method scope only. Omit --method to use BENCHMARK_METHODS.
+BENCHMARK_METHODS:
+  - "baseline"
+  - "randomized_training"
+  - "adversarial_training"
+  - "adaptive_robust_loss"
+  - "ensemble"
+  - "randomized_smoothing"
+  - "fault_augmentation"
+  - "revin"
+RAISE_ERROR: true  # if false, continue with next model if an error occurs during hyperparameter tuning
+MAX_HP_TRIALS_PER_MODEL: 40  # limit unique tuning trials per model architecture. null runs all
+
+### TESTING ARGUMENTS ###
+N_TEST_SAMPLES: 10000
+EVAL_DATA_SEED: null
+PERTURBATION_CHANNEL_FRACTION_MAX: 0.5
+PERTURBATION_SCENARIOS:
+  # Canonical benchmark order, exact D_w ties break in this sequence.
+  # Value faults
+  - "drift"
+  - "attenuation"
+  - "noise"
+  - "spike"
+  # Timing faults
+  - "time_stretch"
+  - "time_compress"
+  # Availability faults
+  - "stuck_sensor"
+  - "missing_data"
+  # Discrete faults
+  # - "wrong_state"
+  # - "chattering"
+FULL_COVERAGE: false  # Partial coverage is the default. Pass --full-coverage for strict benchmark checks.
+FORECAST_EXTREMES: false  # rerender forecast-extreme figures during meta-analysis
+FORECAST_EXTREME_TOP_K: 10  # top-k worst and top-k best samples to keep in meta-analysis forecast-extremes diagnostics
+REFERENCE_NORMALIZATION_ANCHOR_MODEL: "SeasonalNaive"
+TEST_METRIC: "MSE"  # "MAE", "MAPE", "SMAPE", "MSE"
+EPS: 0.00000001  # epsilon for ratio stability
+BOOTSTRAP_CI_RESAMPLES: 1000
+BOOTSTRAP_CI_CONFIDENCE_LEVEL: 0.95
+
+
+### IMPROVEMENT ARGUMENTS ###
+IMPROVEMENT_SELECTION_MODE: "clean"  # "clean", "perturbed_worst", "perturbed_mean"
+REFRESH_SELECTION_METRICS: false  # force recomputation of selector-derived validation metrics during winner selection

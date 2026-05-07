@@ -1,0 +1,52 @@
+# Train-side fault augmentation with explicit sampled fault scenarios.
+pipeline_id: "fa_prof{train_perturbation_profile}_mix{train_perturbation_probability}_sev{train_perturbation_severity_max}_frac{train_perturbation_channel_fraction_max}"
+pipeline_method: "fault_augmentation"
+pipeline_kind: "train"
+
+recipe_params:
+  train_perturbation_profile:
+    default: "holdout_simple"
+    grid: ["holdout_simple", "holdout_varying"]
+  train_perturbation_probability:
+    default: 1.0
+    grid: [0.75, 1.0]
+  train_perturbation_severity_max:
+    default: 1.0
+    grid: [0.75, 1.0]
+  train_perturbation_channel_fraction_max:
+    default: 0.1
+    grid: [0.1, 0.25]
+
+train_fault_profiles:
+  holdout_simple:
+    scenarios:
+      - linear_drift
+      - scaling
+      - trimming_constant
+      - packet_loss
+  holdout_varying:
+    scenarios:
+      - nonlinear_drift
+      - time_varying_scaling
+      - trimming_varying
+      - packet_loss
+  holdout:
+    scenarios:
+      - linear_drift
+      - nonlinear_drift
+      - scaling
+      - time_varying_scaling
+      - trimming_constant
+      - trimming_varying
+      - packet_loss
+
+datamodule_kwargs:
+  train_perturbation_profile: "{train_perturbation_profile}"
+  train_perturbation_scenarios: "{train_perturbation_scenarios}"
+  train_perturbation_scenarios_signature: "{train_perturbation_scenarios_signature}"
+  train_perturbation_probability: "{train_perturbation_probability}"
+  train_perturbation_severity_max: "{train_perturbation_severity_max}"
+  train_perturbation_channel_fraction_max: "{train_perturbation_channel_fraction_max}"
+
+model_hparams:
+  mode: "inherit_baseline"
