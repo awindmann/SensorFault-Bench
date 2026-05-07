@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import gc
+import json
 import math
 import os
 import tempfile
@@ -22,7 +24,11 @@ import models
 from config_loader import load_defaults, load_hparams
 from data.data_module import TSDataModule
 from data.dataset import PerturbedDataset
-from data.perturbations import build_perturbation_scenario_params_signature
+from data.perturbations import (
+    build_perturbation_scenario_params_signature,
+    fixed_channel_count_for_fraction,
+    require_perturbation_channel_scope,
+)
 from data.samplers import uniform_severity
 from improvements import get_registration_by_loader_kind
 from models.pretrained_loader import PRETRAINED_MODEL_LOADERS
@@ -42,6 +48,7 @@ from pipelines.selection import (
     expand_testing_method_scope_for_wrap_dependencies,
     has_explicit_architecture_scope,
     is_fully_tested,
+    is_fixed_channel_fraction_complete,
     load_benchmark_recipe_specs_for_scope,
     require_seed_tags,
     resolve_pipeline_tags,
@@ -67,17 +74,22 @@ from utils.parsing import (
     build_mlflow_tracking_uri,
     build_seeded_eval_input_artifact_prefix,
     build_seeded_degradation_artifact_prefix,
+    format_fixed_channel_fraction_token,
     optional_nonempty_tag_value,
     parse_perturbation_scenarios,
+    parse_perturbation_channel_fraction_max,
     parse_optional_name_tuple,
     parse_optional_nonempty_string,
+    parse_optional_unit_float,
     parse_runtime_precision,
     parse_required_positive_int,
     parse_required_bool,
     require_selection_perturbation_context_from_args,
     require_selection_perturbation_context_tags,
     require_shared_anchor_bootstrap_ci_context_from_args,
+    require_shared_anchor_bootstrap_ci_context_tags,
     require_degradation_eval_context_from_args,
+    require_degradation_eval_context_tags,
     require_dataframe_columns,
     require_integer_series,
     require_nonempty_tag_value,
@@ -100,9 +112,17 @@ from testing.shared import (
     _suppress_lightning_worker_warning,
 )
 from utils.scoring import (
+    build_canonical_degradation_context_signature,
     build_degradation_metric_key,
     build_degradation_scenario_metric_key,
+    build_fixed_channel_fraction_artifact_prefix,
+    build_fixed_channel_fraction_context_signature,
+    build_fixed_channel_fraction_metric_key,
+    build_fixed_channel_fraction_scenario_metric_key,
+    build_fixed_channel_fraction_tag_key,
+    download_validated_degradation_artifact_bundle,
     score_degradation_artifact_bundle,
+    validate_fixed_channel_fraction_artifact_bundle,
 )
 from visualizations.plots import (
     plot_robustness_vs_performance,
@@ -926,6 +946,8 @@ def _build_degradation_scenario_batch(
             rng,
             cont_idx,
             disc_idx,
+            channel_count_mode="severity",
+            channel_count_value=severity,
         )
         if y_pert.shape != y_cpu[row_idx].shape or not torch.allclose(
             y_pert,
@@ -949,6 +971,147 @@ def _build_degradation_scenario_batch(
     )
 
 
+def _eligible_channels_for_perturbation_scope(
+    perturbation,
+    *,
+    cont_idx: Sequence[int],
+    disc_idx: Sequence[int],
+    context_name: str,
+) -> tuple[str, list[int] | None]:
+    scope = require_perturbation_channel_scope(
+        perturbation,
+        context=context_name,
+    )
+    if scope == "continuous":
+        return scope, [int(idx) for idx in cont_idx]
+    if scope == "discrete":
+        return scope, [int(idx) for idx in disc_idx]
+    if scope == "all":
+        return scope, None
+    raise ValueError(f"{context_name} has unsupported channel_scope={scope!r}.")
+
+
+def _build_fixed_channel_fraction_scenario_batch(
+    *,
+    perturbation,
+    x_cpu: torch.Tensor,
+    y_cpu: torch.Tensor,
+    batch_sample_ids: Sequence[int],
+    eval_data_seed: int,
+    scenario_idx: int,
+    cont_idx,
+    disc_idx,
+    fixed_channel_fraction: float,
+    perturbation_channel_fraction_max: float,
+    context_name: str,
+) -> tuple[torch.Tensor, torch.Tensor, list[float], list[dict[str, Any]]]:
+    scope, eligible_channels = _eligible_channels_for_perturbation_scope(
+        perturbation,
+        cont_idx=cont_idx,
+        disc_idx=disc_idx,
+        context_name=context_name,
+    )
+    derived_fixed_channel_count: int | None = None
+    eligible_channel_count: int | None = None
+    if eligible_channels is not None:
+        eligible_channel_count = len(eligible_channels)
+        derived_fixed_channel_count = fixed_channel_count_for_fraction(
+            eligible_channel_count,
+            perturbation_channel_fraction_max,
+            fixed_channel_fraction,
+        )
+
+    x_pert_rows: list[torch.Tensor] = []
+    y_pert_rows: list[torch.Tensor] = []
+    severities: list[float] = []
+    diagnostics: list[dict[str, Any]] = []
+    for row_idx, sample_id in enumerate(batch_sample_ids):
+        rng = torch.Generator().manual_seed(
+            _degradation_scenario_seed(
+                eval_data_seed,
+                scenario_idx=int(scenario_idx),
+                sample_id=int(sample_id),
+            )
+        )
+        intensity_severity = float(uniform_severity(rng))
+        x_pert, y_pert, affected_channels = perturbation(
+            x_cpu[row_idx].clone(),
+            y_cpu[row_idx].clone(),
+            intensity_severity,
+            rng,
+            cont_idx,
+            disc_idx,
+            channel_count_mode="fixed_fraction",
+            channel_count_value=fixed_channel_fraction,
+        )
+        if y_pert.shape != y_cpu[row_idx].shape or not torch.allclose(
+            y_pert,
+            y_cpu[row_idx],
+            rtol=0.0,
+            atol=1e-6,
+        ):
+            raise ValueError(
+                f"{context_name} requires perturbations to leave targets unchanged."
+            )
+        selected_channel_count: int | None = None
+        if derived_fixed_channel_count is not None:
+            selected_channel_count = (
+                0 if intensity_severity == 0.0 else int(derived_fixed_channel_count)
+            )
+        x_pert_rows.append(x_pert.to(dtype=torch.float32))
+        y_pert_rows.append(y_pert.to(dtype=torch.float32))
+        severities.append(intensity_severity)
+        diagnostics.append(
+            {
+                "intensity_severity": float(intensity_severity),
+                "requested_fixed_channel_fraction": (
+                    float(fixed_channel_fraction) if scope != "all" else None
+                ),
+                "derived_fixed_channel_count": derived_fixed_channel_count,
+                "channel_scope": scope,
+                "eligible_channel_count": eligible_channel_count,
+                "selected_channel_count": selected_channel_count,
+                "reported_affected_channel_count": int(len(affected_channels)),
+            }
+        )
+    return (
+        torch.stack(x_pert_rows, dim=0),
+        torch.stack(y_pert_rows, dim=0),
+        severities,
+        diagnostics,
+    )
+
+
+def _preflight_fixed_channel_fraction_channel_counts(
+    perturbations: Sequence[Any],
+    *,
+    cont_idx: Sequence[int],
+    disc_idx: Sequence[int],
+    fixed_channel_fraction: float,
+    perturbation_channel_fraction_max: float,
+    context_name: str,
+) -> None:
+    for scenario_idx, perturbation in enumerate(perturbations):
+        scope, eligible_channels = _eligible_channels_for_perturbation_scope(
+            perturbation,
+            cont_idx=cont_idx,
+            disc_idx=disc_idx,
+            context_name=f"{context_name} scenario/{scenario_idx}",
+        )
+        if scope == "all":
+            continue
+        if eligible_channels is None:
+            raise ValueError(
+                f"{context_name} scenario/{scenario_idx} has channel_scope={scope!r} "
+                "but no eligible channel list."
+            )
+        fixed_channel_count_for_fraction(
+            len(eligible_channels),
+            perturbation_channel_fraction_max,
+            fixed_channel_fraction,
+        )
+
+
 def _prime_model_for_degradation_evaluation(
     model,
     args,
@@ -967,7 +1130,13 @@ def _prime_model_for_degradation_evaluation(
     )
 
 
-def _make_eval_logger(run_id: str, dataset_name: str, args) -> MLFlowLogger:
+def _make_eval_logger(
+    run_id: str,
+    dataset_name: str,
+    args,
+    *,
+    log_test_commit: bool = True,
+) -> MLFlowLogger:
     tracking_uri = build_mlflow_tracking_uri(args.logdir)
     logger = MLFlowLogger(
         tracking_uri=tracking_uri,
@@ -975,7 +1144,8 @@ def _make_eval_logger(run_id: str, dataset_name: str, args) -> MLFlowLogger:
         experiment_name=f"{dataset_name}",
         run_id=run_id,
     )
-    logger.experiment.set_tag(logger.run_id, "test_commit", current_git_commit())
+    if log_test_commit:
+        logger.experiment.set_tag(logger.run_id, "test_commit", current_git_commit())
     return logger
 
 
@@ -1315,6 +1485,435 @@ def _run_degradation_evaluation(
     )
 
 
+def _validate_canonical_clean_anchor_replay(
+    *,
+    clean_df: pd.DataFrame,
+    base_dataset,
+    context_name: str,
+) -> None:
+    expected_sample_ids = [int(value) for value in clean_df["sample_id"].tolist()]
+    if expected_sample_ids != list(range(len(expected_sample_ids))):
+        raise ValueError(
+            f"{context_name} canonical clean sample_id values must be contiguous from zero."
+        )
+    if len(base_dataset) < len(clean_df):
+        raise ValueError(
+            f"{context_name} base test dataset has {len(base_dataset)} rows but canonical "
+            f"clean anchors require {len(clean_df)}."
+        )
+    source_sample_idx = getattr(base_dataset, "sample_idxs", None)
+    if source_sample_idx is None:
+        raise ValueError(
+            f"{context_name} base test dataset is missing sample_idxs required for "
+            "canonical anchor replay."
+        )
+    observed = [int(value) for value in source_sample_idx[: len(clean_df)]]
+    expected = [int(value) for value in clean_df["source_sample_idx"].tolist()]
+    if observed != expected:
+        mismatches = [
+            {
+                "sample_id": sample_id,
+                "expected_source_sample_idx": expected_idx,
+                "observed_source_sample_idx": observed_idx,
+            }
+            for sample_id, (expected_idx, observed_idx) in enumerate(zip(expected, observed))
+            if expected_idx != observed_idx
+        ][:8]
+        raise ValueError(
+            f"{context_name} current datamodule does not reproduce canonical clean "
+            f"anchor order. Examples: {mismatches}."
+        )
+
+
+def _build_fixed_channel_fraction_error_frames(
+    *,
+    model,
+    dm: TSDataModule,
+    args,
+    clean_df: pd.DataFrame,
+    eval_data_seed: int,
+    fixed_channel_fraction: float,
+    perturbation_channel_fraction_max: float,
+    context_name: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...]]:
+    perturbed_dataset, base_dataset, scenario_names, perturbations = (
+        _require_degradation_runtime(
+            dm,
+            context_name=context_name,
+        )
+    )
+    _validate_canonical_clean_anchor_replay(
+        clean_df=clean_df,
+        base_dataset=base_dataset,
+        context_name=context_name,
+    )
+    _preflight_fixed_channel_fraction_channel_counts(
+        perturbations,
+        cont_idx=perturbed_dataset.cont_idx,
+        disc_idx=perturbed_dataset.disc_idx,
+        fixed_channel_fraction=fixed_channel_fraction,
+        perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+        context_name=context_name,
+    )
+
+    runtime_device = _resolve_requested_runtime_device(
+        args,
+        context_name=context_name,
+    )
+    runtime_precision = parse_runtime_precision(
+        require_namespace_value(args, key="precision"),
+        device_type=runtime_device.type,
+        key="args.precision",
+        context=context_name,
+    )
+    metric_fn = resolve_stateless_loss(args.test_metric)
+    target_n_samples = int(len(clean_df))
+    scenario_rows: list[dict[str, Any]] = []
+    clean_loader = DataLoader(
+        base_dataset,
+        batch_size=int(args.batch_size),
+        shuffle=False,
+        num_workers=0,
+        drop_last=False,
+    )
+    sample_offset = 0
+    with _configure_eval_matmul_precision_for_device(runtime_device):
+        model.eval()
+        with _manual_eval_runtime_context(
+            model,
+            runtime_device=runtime_device,
+            runtime_precision=runtime_precision,
+        ):
+            with torch.no_grad():
+                for x_cpu, y_cpu in clean_loader:
+                    if sample_offset >= target_n_samples:
+                        break
+                    batch_count = int(x_cpu.size(0))
+                    remaining = target_n_samples - sample_offset
+                    if batch_count > remaining:
+                        batch_count = int(remaining)
+                        x_cpu = x_cpu[:batch_count]
+                        y_cpu = y_cpu[:batch_count]
+                    source_sample_idx = _require_degradation_source_sample_idx(
+                        base_dataset,
+                        sample_offset=sample_offset,
+                        batch_size=batch_count,
+                        context_name=context_name,
+                    )
+                    batch_sample_ids = _build_degradation_batch_sample_ids(
+                        sample_offset=sample_offset,
+                        batch_size=batch_count,
+                    )
+                    for scenario_idx, (scenario_name, perturbation) in enumerate(
+                        zip(scenario_names, perturbations)
+                    ):
+                        x_pert_cpu, y_pert_cpu, severities, diagnostics = (
+                            _build_fixed_channel_fraction_scenario_batch(
+                                perturbation=perturbation,
+                                x_cpu=x_cpu,
+                                y_cpu=y_cpu,
+                                batch_sample_ids=batch_sample_ids,
+                                eval_data_seed=eval_data_seed,
+                                scenario_idx=scenario_idx,
+                                cont_idx=perturbed_dataset.cont_idx,
+                                disc_idx=perturbed_dataset.disc_idx,
+                                fixed_channel_fraction=fixed_channel_fraction,
+                                perturbation_channel_fraction_max=(
+                                    perturbation_channel_fraction_max
+                                ),
+                                context_name=context_name,
+                            )
+                        )
+                        pred_pert = _predict_with_bound_noise_sample_ids(
+                            model,
+                            _move_tensor_to_manual_eval_runtime(
+                                x_pert_cpu,
+                                runtime_device=runtime_device,
+                                runtime_precision=runtime_precision,
+                            ),
+                            batch_sample_ids,
+                            context_key=f"degradation evaluation:scenario:{scenario_idx}",
+                        )
+                        err_pert = _score_degradation_predictions(
+                            metric_fn,
+                            pred_pert,
+                            _move_tensor_to_manual_eval_runtime(
+                                y_pert_cpu,
+                                runtime_device=runtime_device,
+                                runtime_precision=runtime_precision,
+                            ),
+                            batch_size=batch_count,
+                            context_name=f"{context_name} scenario evaluation",
+                        )
+                        for row_idx in range(batch_count):
+                            sample_id = int(sample_offset + row_idx)
+                            row = {
+                                "sample_id": sample_id,
+                                "source_sample_idx": int(source_sample_idx[row_idx]),
+                                "pert_idx": int(scenario_idx),
+                                "scenario": str(scenario_name),
+                                "severity": float(severities[row_idx]),
+                                "err_pert": float(err_pert[row_idx]),
+                            }
+                            row.update(diagnostics[row_idx])
+                            scenario_rows.append(row)
+                    sample_offset += batch_count
+
+    if sample_offset != target_n_samples:
+        raise ValueError(
+            f"{context_name} consumed {sample_offset} canonical anchors but expected "
+            f"{target_n_samples}."
+        )
+
+    scenario_samples_df = pd.DataFrame(
+        scenario_rows,
+        columns=[
+            "sample_id",
+            "source_sample_idx",
+            "pert_idx",
+            "scenario",
+            "severity",
+            "err_pert",
+            "intensity_severity",
+            "requested_fixed_channel_fraction",
+            "derived_fixed_channel_count",
+            "channel_scope",
+            "eligible_channel_count",
+            "selected_channel_count",
+            "reported_affected_channel_count",
+        ],
+    )
+    return clean_df.copy(), scenario_samples_df, tuple(scenario_names)
+
+
+def _run_fixed_channel_fraction_evaluation(
+    *,
+    run,
+    model,
+    logger: MLFlowLogger,
+    dm: TSDataModule,
+    args,
+    eval_data_seed: int,
+    fixed_channel_fraction: float,
+    bootstrap_ci_context: Mapping[str, Any],
+    canonical_clean_df: pd.DataFrame,
+    canonical_context_signature: str,
+    perturbation_scenario_params_signature: str,
+) -> None:
+    if logger is None or not hasattr(logger, "experiment"):
+        raise ValueError(
+            "MLflow logger with experiment handle is required during fixed-channel-fraction "
+            "logging."
+        )
+    perturbation_channel_fraction_max = float(args.perturbation_channel_fraction_max)
+    logger.experiment.set_tag(
+        logger.run_id,
+        build_fixed_channel_fraction_tag_key(
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            tag_name="complete",
+        ),
+        "false",
+    )
+    clean_df, scenario_samples_df, scenario_names = (
+        _build_fixed_channel_fraction_error_frames(
+            model=model,
+            dm=dm,
+            args=args,
+            clean_df=canonical_clean_df,
+            eval_data_seed=eval_data_seed,
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            context_name=f"Run {run.info.run_id} fixed-channel-fraction",
+        )
+    )
+    idx_to_name = {idx: str(name) for idx, name in enumerate(scenario_names)}
+    canonical_projection = scenario_samples_df.loc[
+        :,
+        [
+            "sample_id",
+            "source_sample_idx",
+            "pert_idx",
+            "scenario",
+            "severity",
+            "err_pert",
+        ],
+    ]
+    clean_df, _, scenario_summary_df, metric_bundle, worst_scenario_name = (
+        score_degradation_artifact_bundle(
+            clean_df,
+            canonical_projection,
+            expected_idx_to_name=idx_to_name,
+            bootstrap_resamples=bootstrap_ci_context["bootstrap_ci_resamples"],
+            bootstrap_confidence_level=bootstrap_ci_context[
+                "bootstrap_ci_confidence_level"
+            ],
+            bootstrap_seed=bootstrap_ci_context["bootstrap_ci_seed"],
+            context_name=f"Run {run.info.run_id} fixed-channel-fraction bundle",
+        )
+    )
+    clean_df, scenario_samples_df, scenario_summary_df = (
+        validate_fixed_channel_fraction_artifact_bundle(
+            clean_df,
+            scenario_samples_df,
+            scenario_summary_df,
+            expected_idx_to_name=idx_to_name,
+            expected_n_test_samples=int(len(clean_df)),
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            context_name=f"Run {run.info.run_id} fixed-channel-fraction bundle",
+        )
+    )
+
+    for metric_name in ("D_w", "D_mean", "err_pert_ws", "err_pert_mean"):
+        for suffix in ("", "_CI_lo", "_CI_hi"):
+            key_name = f"{metric_name}{suffix}"
+            logger.experiment.log_metric(
+                logger.run_id,
+                build_fixed_channel_fraction_metric_key(
+                    test_metric=args.test_metric,
+                    fixed_channel_fraction=fixed_channel_fraction,
+                    perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+                    metric_name=key_name,
+                ),
+                float(metric_bundle[key_name]),
+            )
+    for scenario_idx in sorted(idx_to_name):
+        for metric_name in (
+            "D",
+            "D_CI_lo",
+            "D_CI_hi",
+            "err_pert",
+            "err_pert_CI_lo",
+            "err_pert_CI_hi",
+        ):
+            logger.experiment.log_metric(
+                logger.run_id,
+                build_fixed_channel_fraction_scenario_metric_key(
+                    test_metric=args.test_metric,
+                    fixed_channel_fraction=fixed_channel_fraction,
+                    perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+                    scenario_idx=scenario_idx,
+                    metric_name=metric_name,
+                ),
+                float(metric_bundle[f"scenario/{scenario_idx}/{metric_name}"]),
+            )
+    logger.experiment.set_tag(
+        logger.run_id,
+        build_fixed_channel_fraction_metric_key(
+            test_metric=args.test_metric,
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            metric_name="worst_scenario",
+        ),
+        worst_scenario_name,
+    )
+
+    artifact_path_prefix = build_fixed_channel_fraction_artifact_prefix(
+        test_metric=args.test_metric,
+        eval_data_seed=eval_data_seed,
+        fixed_channel_fraction=fixed_channel_fraction,
+        perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+    )
+    fraction_token = format_fixed_channel_fraction_token(
+        fixed_channel_fraction,
+        max_value=perturbation_channel_fraction_max,
+    )
+    context_payload = {
+        "evaluation_family": "fixed_channel_fraction",
+        "fixed_channel_fraction": float(fixed_channel_fraction),
+        "fixed_channel_fraction_token": fraction_token,
+        "test_metric": str(args.test_metric),
+        "eval_data_seed": int(eval_data_seed),
+        "n_test_samples": int(len(clean_df)),
+        "perturbation_channel_fraction_max": perturbation_channel_fraction_max,
+        "perturbation_scenarios_signature": require_degradation_eval_context_from_args(
+            args,
+            eval_data_seed=eval_data_seed,
+            context="args",
+        )["perturbation_scenarios_signature"],
+        "perturbation_scenarios_count": int(len(idx_to_name)),
+        "perturbation_idx_name_map": {
+            str(idx): str(name) for idx, name in idx_to_name.items()
+        },
+        "perturbation_scenario_params_signature": perturbation_scenario_params_signature,
+        "canonical_context_signature": canonical_context_signature,
+        "bootstrap_ci_semantics": bootstrap_ci_context["bootstrap_ci_semantics"],
+        "bootstrap_ci_resamples": int(bootstrap_ci_context["bootstrap_ci_resamples"]),
+        "bootstrap_ci_confidence_level": float(
+            bootstrap_ci_context["bootstrap_ci_confidence_level"]
+        ),
+        "bootstrap_ci_seed": int(bootstrap_ci_context["bootstrap_ci_seed"]),
+        "artifact_prefix": artifact_path_prefix,
+    }
+    context_signature = build_fixed_channel_fraction_context_signature(
+        context_payload
+    )
+    with tempfile.TemporaryDirectory(prefix="robust-") as tmpdir:
+        clean_path = os.path.join(tmpdir, "clean_test_samples.csv")
+        clean_df.to_csv(clean_path, index=False)
+        logger.experiment.log_artifact(
+            logger.run_id,
+            clean_path,
+            artifact_path=artifact_path_prefix,
+        )
+        scenario_samples_path = os.path.join(tmpdir, "scenario_samples.csv")
+        scenario_samples_df.to_csv(scenario_samples_path, index=False)
+        logger.experiment.log_artifact(
+            logger.run_id,
+            scenario_samples_path,
+            artifact_path=artifact_path_prefix,
+        )
+        scenario_summary_path = os.path.join(tmpdir, "scenario_summary.csv")
+        scenario_summary_df.to_csv(scenario_summary_path, index=False)
+        logger.experiment.log_artifact(
+            logger.run_id,
+            scenario_summary_path,
+            artifact_path=artifact_path_prefix,
+        )
+        context_path = os.path.join(tmpdir, "context.json")
+        with open(context_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                context_payload,
+                handle,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        logger.experiment.log_artifact(
+            logger.run_id,
+            context_path,
+            artifact_path=artifact_path_prefix,
+        )
+
+    logger.experiment.set_tag(
+        logger.run_id,
+        build_fixed_channel_fraction_tag_key(
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            tag_name="fixed_channel_fraction",
+        ),
+        str(float(fixed_channel_fraction)),
+    )
+    logger.experiment.set_tag(
+        logger.run_id,
+        build_fixed_channel_fraction_tag_key(
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            tag_name="context_signature",
+        ),
+        context_signature,
+    )
+    logger.experiment.set_tag(
+        logger.run_id,
+        build_fixed_channel_fraction_tag_key(
+            fixed_channel_fraction=fixed_channel_fraction,
+            perturbation_channel_fraction_max=perturbation_channel_fraction_max,
+            tag_name="complete",
+        ),
+        "true",
+    )
+
+
 def _log_perturbed_validation_selection_metrics(
     run,
     *,
@@ -1607,6 +2206,76 @@ def _build_winner_selection_provenance_tag_payload_for_run(
     return build_winner_selection_provenance_tag_payload(
         provenance,
         context_name=f"Run {run.info.run_id} winner selection provenance",
+    )
+
+
+def _raise_fixed_channel_fraction_canonical_not_ready(run, *, args) -> None:
+    run_id = run.info.run_id
+    params = run.data.params
+    tags = run.data.tags
+    if params is None:
+        raise ValueError(
+            f"Run {run_id} is missing params required for canonical fixed-channel-fraction "
+            "precondition checks."
+        )
+    if tags is None:
+        raise ValueError(
+            f"Run {run_id} is missing tags required for canonical fixed-channel-fraction "
+            "precondition checks."
+        )
+    diagnostics: dict[str, Any] = {
+        "tested_param": params.get("tested"),
+        "robustness_results_complete": tags.get(ROBUSTNESS_RESULTS_COMPLETE_TAG),
+    }
+    try:
+        expected_eval_data_seed = resolve_effective_eval_data_seed(
+            require_namespace_value(args, key="eval_data_seed"),
+            canonical_seed_data=tags.get("seed_data"),
+            eval_key="args.eval_data_seed",
+            canonical_key="seed_data tag",
+        )
+        expected_eval_context = require_degradation_eval_context_from_args(
+            args,
+            eval_data_seed=expected_eval_data_seed,
+            context="args",
+        )
+        diagnostics["expected_eval_context"] = expected_eval_context
+        diagnostics["logged_eval_context"] = require_degradation_eval_context_tags(
+            tags,
+            run_id=run_id,
+        )
+        diagnostics["expected_perturbation_scenario_params_signature"] = (
+            build_perturbation_scenario_params_signature(
+                require_namespace_value(args, key="perturbation_scenarios")
+            )
+        )
+        diagnostics["logged_perturbation_scenario_params_signature"] = (
+            require_nonempty_tag_value(
+                tags,
+                key="perturbation_scenario_params_signature",
+                run_id=run_id,
+            )
+        )
+        expected_bootstrap_ci_context = require_shared_anchor_bootstrap_ci_context_from_args(
+            args,
+            eval_data_seed=expected_eval_data_seed,
+            test_metric=expected_eval_context["test_metric"],
+            context="args",
+        )
+        diagnostics["expected_bootstrap_ci_context"] = expected_bootstrap_ci_context
+        diagnostics["logged_bootstrap_ci_context"] = (
+            require_shared_anchor_bootstrap_ci_context_tags(
+                tags,
+                run_id=run_id,
+                require_seed=True,
+            )
+        )
+    except Exception as exc:
+        diagnostics["context_diagnostic_error"] = str(exc)
+    raise ValueError(
+        f"Run {run_id} is not canonically tested for the current fixed-channel-fraction "
+        f"context. Diagnostics: {diagnostics}. Run canonical testing without "
+        "--fixed-channel-fraction before running fixed-channel-fraction evaluation."
     )
 
 
@@ -2399,6 +3068,7 @@ def _resolve_dataset_testing_coverage_scope(
 
     stale_run_ids = set()
     stale_reasons: dict[str, str] = {}
+    hparams_artifact_cache: dict[str, dict[str, Any]] = {}
 
     def _mark_stale(run_id: str, reason: str) -> None:
         stale_run_ids.add(run_id)
@@ -2414,6 +3084,8 @@ def _resolve_dataset_testing_coverage_scope(
                 sorted_base_runs_by_key=sorted_base_runs_by_key,
                 baseline_hparam_specs_by_arch=baseline_hparam_specs_by_arch,
                 scoped_train_run_ids_by_key=scoped_train_run_ids_by_key,
+                artifact_client=client,
+                hparams_artifact_cache=hparams_artifact_cache,
             )
             if reason:
                 _mark_stale(run.info.run_id, reason)
@@ -2541,6 +3213,25 @@ def test_on_dataset(
     recipe_specs_for_scope: Optional[list[PipelineSpec]] = None,
 ):
     _configure_runtime_loggers_for_testing()
+    args.full_coverage = require_namespace_bool(args, key="full_coverage")
+    perturbation_channel_fraction_max = parse_perturbation_channel_fraction_max(
+        require_namespace_value(
+            args,
+            key="perturbation_channel_fraction_max",
+        ),
+        key="perturbation_channel_fraction_max",
+    )
+    fixed_channel_fraction = parse_optional_unit_float(
+        getattr(args, "fixed_channel_fraction", None),
+        key="fixed_channel_fraction",
+        max_value=perturbation_channel_fraction_max,
+    )
+    args.perturbation_channel_fraction_max = perturbation_channel_fraction_max
+    args.fixed_channel_fraction = fixed_channel_fraction
+    selection_args = args
+    if fixed_channel_fraction is not None:
+        selection_args = copy.copy(args)
+        selection_args.rerun = False
     scope = _resolve_dataset_testing_coverage_scope(
         dataset_spec,
         args,
@@ -2571,6 +3262,25 @@ def test_on_dataset(
         eval_data_seed=eval_data_seed,
         val_seed=data_seed,
     )
+    fixed_channel_fraction_dm_by_n: dict[int, TSDataModule] = {int(args.n_test_samples): dm}
+
+    def _dm_for_effective_test_samples(n_test_samples: int) -> TSDataModule:
+        parsed_n = parse_required_positive_int(
+            n_test_samples,
+            key="fixed_channel_fraction_n_test_samples",
+        )
+        if parsed_n not in fixed_channel_fraction_dm_by_n:
+            fixed_channel_fraction_args = copy.copy(args)
+            fixed_channel_fraction_args.n_test_samples = parsed_n
+            fixed_channel_fraction_dm_by_n[parsed_n] = _build_testing_datamodule(
+                dataset_spec=dataset_spec,
+                args=fixed_channel_fraction_args,
+                canonical_data_seed=data_seed,
+                eval_data_seed=eval_data_seed,
+                val_seed=data_seed,
+            )
+        return fixed_channel_fraction_dm_by_n[parsed_n]
+
     selection_dm_holder: dict[str, TSDataModule] = {"selection": dm}
 
     def _best_run(runs, *, score_fn, include_end_time: bool = True):
@@ -2598,7 +3308,7 @@ def test_on_dataset(
             arch=arch,
             pipeline_method=pipeline_method,
             pipeline_id=pipeline_id,
-            args=args,
+            args=selection_args,
             client=client,
             dataset_name=dataset_name,
             dm_holder=selection_dm_holder,
@@ -2808,7 +3518,7 @@ def test_on_dataset(
                 winner_selection_tag_payload = (
                     _build_winner_selection_provenance_tag_payload_for_run(
                         run,
-                        args=args,
+                        args=selection_args,
                         test_metric=args.test_metric,
                     )
                 )
@@ -2865,6 +3575,99 @@ def test_on_dataset(
         if best_run is None:
             raise ValueError(f"Selected variant ({arch}, {pipeline_method}, {pipeline_id}) has no resolved run.")
         best_run = client.get_run(best_run.info.run_id)
+
+        if fixed_channel_fraction is not None:
+            if not is_fully_tested(best_run, args=args, client=client):
+                _raise_fixed_channel_fraction_canonical_not_ready(best_run, args=args)
+            if not args.rerun and is_fixed_channel_fraction_complete(
+                best_run,
+                args=args,
+                client=client,
+                fixed_fraction=fixed_channel_fraction,
+            ):
+                n_skipped += 1
+                continue
+
+            run_eval_context = require_degradation_eval_context_tags(
+                best_run.data.tags,
+                run_id=best_run.info.run_id,
+            )
+            run_bootstrap_ci_context = require_shared_anchor_bootstrap_ci_context_tags(
+                best_run.data.tags,
+                run_id=best_run.info.run_id,
+                require_seed=True,
+            )
+            run_params_signature = require_nonempty_tag_value(
+                best_run.data.tags,
+                key="perturbation_scenario_params_signature",
+                run_id=best_run.info.run_id,
+            )
+            canonical_context_signature = build_canonical_degradation_context_signature(
+                degradation_eval_context=run_eval_context,
+                bootstrap_ci_context=run_bootstrap_ci_context,
+                perturbation_scenario_params_signature=run_params_signature,
+            )
+            test_metric = str(run_eval_context["test_metric"])
+            canonical_clean_df, _, _ = download_validated_degradation_artifact_bundle(
+                client,
+                run_id=best_run.info.run_id,
+                test_metric=test_metric,
+                eval_data_seed=int(run_eval_context["eval_data_seed"]),
+                expected_idx_to_name=run_eval_context["perturbation_idx_name_map"],
+                expected_n_test_samples=int(run_eval_context["n_test_samples"]),
+                expected_clean_metric_value=best_run.data.metrics[f"{test_metric}_test"],
+                context_name=(
+                    f"Run {best_run.info.run_id} canonical degradation artifacts "
+                    "for fixed-channel-fraction"
+                ),
+            )
+            fixed_channel_fraction_dm = _dm_for_effective_test_samples(
+                int(run_eval_context["n_test_samples"])
+            )
+            n_evaluated += 1
+            variant = f": {pipeline_id}" if pipeline_id != pipeline_method else ""
+            print(
+                f"[{trial_i}/{total_variants}] {arch} ({arch_num[arch]}/{n_archs}) | "
+                f"{pipeline_method}{variant} ({_arch_i}/{variants_per_arch[arch]}) -- "
+                "fixed-channel-fraction"
+            )
+            model, _default_root_dir = load_model_with_loader(
+                client,
+                best_run,
+                args,
+                fixed_channel_fraction_dm,
+            )
+            seeds = require_seed_tags(best_run)
+            try:
+                _prime_model_for_degradation_evaluation(
+                    model,
+                    args,
+                    fixed_channel_fraction_dm,
+                    eval_seed=seeds["seed_eval"],
+                )
+                logger = _make_eval_logger(
+                    best_run.info.run_id,
+                    dataset_name,
+                    args,
+                    log_test_commit=False,
+                )
+                model._log_hyperparams = False
+                _run_fixed_channel_fraction_evaluation(
+                    run=best_run,
+                    model=model,
+                    logger=logger,
+                    dm=fixed_channel_fraction_dm,
+                    args=args,
+                    eval_data_seed=int(run_eval_context["eval_data_seed"]),
+                    fixed_channel_fraction=fixed_channel_fraction,
+                    bootstrap_ci_context=run_bootstrap_ci_context,
+                    canonical_clean_df=canonical_clean_df,
+                    canonical_context_signature=canonical_context_signature,
+                    perturbation_scenario_params_signature=run_params_signature,
+                )
+            finally:
+                _teardown_model_after_eval(model)
+            continue
 
         # Skip if already tested (with all eval context tags present)
         if not args.rerun and is_fully_tested(best_run, args=args, client=client):

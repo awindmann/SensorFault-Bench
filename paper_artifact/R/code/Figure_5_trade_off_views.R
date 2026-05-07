@@ -87,14 +87,13 @@ backbone_family_palette <- c(
   "Statistical" = "#CC79A7"
 )
 
-grid_color <- "#0000001F"
 accent_color <- "#7F7F7F"
 baseline_legend_label <- "Baseline model"
 
 paper_theme <- function() {
   theme_bw(base_size = 10, base_family = "serif") +
     theme(
-      panel.grid.major = element_blank(),#element_line(color = grid_color, linewidth = 0.25),
+      panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
       strip.background = element_blank(),
       axis.text.x = element_text(color="black", size = 9),
@@ -392,43 +391,8 @@ backbone_label_df <- baseline_pareto_df %>%
     label_nudge_x = ifelse(dataset_label == "Traffic" & model == "TSMixer", 0.045, label_nudge_x),
     label_nudge_y = ifelse(dataset_label == "Traffic" & model == "TSMixer", 0.04, label_nudge_y),
     label_nudge_x = ifelse(dataset_label == "Traffic" & model == "GRU", 0.05, label_nudge_x),
-    #label_nudge_y = ifelse(dataset_label == "Traffic" & model == "GRU", 0.0198, label_nudge_y),
     label_nudge_y = ifelse(dataset_label == "Traffic" & model == "Chronos2", 0.05, label_nudge_y)
   )
-# backbone_legend_df <- data.frame(
-#   dataset_label = factor(rep("Penmanshiel", 6), levels = levels(baseline_pareto_df$dataset_label)),
-#   architecture_family = factor(names(backbone_family_palette), levels = names(backbone_family_palette)),
-#   label = names(backbone_family_palette),
-#   x = c(0.349, 0.349, 0.349, 0.378, 0.378, 0.378),
-#   x_text = c(0.353, 0.353, 0.353, 0.382, 0.382, 0.382),
-#   y = c(1.72, 1.66, 1.60, 1.72, 1.66, 1.60),
-#   stringsAsFactors = FALSE
-# )
-# backbone_legend_title_df <- data.frame(
-#   dataset_label = factor("Penmanshiel", levels = levels(baseline_pareto_df$dataset_label)),
-#   x = 0.371,
-#   y = 1.81,
-#   label = "Architecture",
-#   stringsAsFactors = FALSE
-# )
-# backbone_legend_line_df <- data.frame(
-#   dataset_label = factor("Penmanshiel", levels = levels(baseline_pareto_df$dataset_label)),
-#   x = 0.358,
-#   xend = 0.366,
-#   y = 1.53,
-#   yend = 1.53,
-#   x_text = 0.370,
-#   label = "Pareto frontier",
-#   stringsAsFactors = FALSE
-# )
-# backbone_legend_box_df <- data.frame(
-#   dataset_label = factor("Penmanshiel", levels = levels(baseline_pareto_df$dataset_label)),
-#   xmin = 0.344,
-#   xmax = 0.409,
-#   ymin = 1.49,
-#   ymax = 1.84,
-#   stringsAsFactors = FALSE
-# )
 
 backbone_pareto_plot <- ggplot(
   baseline_pareto_df,
@@ -463,55 +427,6 @@ backbone_pareto_plot <- ggplot(
     segment.size = 0.25,
     show.legend = FALSE
   ) +
-#  geom_rect(
-#    data = backbone_legend_box_df,
-#    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-#    inherit.aes = FALSE,
-#    fill = NA,
-#    color = "black",
-#    linewidth = 0.35
-#  ) +
-#  geom_text(
-#    data = backbone_legend_title_df,
-#    aes(x = x, y = y, label = label),
-#    inherit.aes = FALSE,
-#    hjust = 0.5,
-#    family = "serif",
-#    fontface = "bold",
-#    size = 2.4,
-#    color = "black"
-#  ) +
-#  geom_point(
-#    data = backbone_legend_df,
-#    aes(x = x, y = y, color = architecture_family),
-#    inherit.aes = FALSE,
-#    size = 1.8
-#  ) +
-#  geom_text(
-#    data = backbone_legend_df,
-#    aes(x = x_text, y = y, label = label, color = architecture_family),
-#    inherit.aes = FALSE,
-#    hjust = 0,
-#    family = "serif",
-#    size = 2.0
-#  ) +
-#  geom_segment(
-#    data = backbone_legend_line_df,
-#    aes(x = x, xend = xend, y = y, yend = yend),
-#    inherit.aes = FALSE,
-#    color = accent_color,
-#    linewidth = 0.45,
-#    linetype = "22"
-#  ) +
-#  geom_text(
-#    data = backbone_legend_line_df,
-#    aes(x = x_text, y = y, label = label),
-#    inherit.aes = FALSE,
-#    hjust = 0,
-#    family = "serif",
-#    size = 2.0,
-#    color = accent_color
-#  ) +
   facet_wrap(~dataset_label, nrow = 1, scales = "free_x") +
   scale_color_manual(values = backbone_family_palette, drop = FALSE) +
   scale_shape_manual(values = c("Baseline model" = 16)) +
@@ -600,7 +515,6 @@ clean_vs_label_df <- clean_vs_df %>%
     label_nudge_x = ifelse(dataset_label == "Beijing Air Tiantan" & model == "PatchTST", -0.05, label_nudge_x),
     label_nudge_y = ifelse(dataset_label == "Beijing Air Tiantan" & model == "PatchTST", -0.05, label_nudge_y),
     label_nudge_x = ifelse(dataset_label == "Beijing Air Tiantan" & model == "SeasonalNaive", 0.065, label_nudge_x),
-    #label_nudge_y = ifelse(dataset_label == "Beijing Air Tiantan" & model == "SeasonalNaive", -0.06, label_nudge_y),
     label_nudge_x = ifelse(dataset_label == "Beijing Air Tiantan" & model == "Chronos2", 0.04, label_nudge_x),
     label_nudge_y = ifelse(dataset_label == "Beijing Air Tiantan" & model == "Chronos2", 0.013, label_nudge_y),
     label_nudge_x = ifelse(dataset_label == "Beijing Air Tiantan" & model == "TSMixer", -0.04, label_nudge_x),
@@ -615,7 +529,6 @@ clean_vs_label_df <- clean_vs_df %>%
     label_nudge_y = ifelse(dataset_label == "Penmanshiel WT08" & model == "Chronos2", 0.012, label_nudge_y),
     label_nudge_y = ifelse(dataset_label == "Penmanshiel WT08" & model == "DLinear", 0.038, label_nudge_y),
     label_nudge_x = ifelse(dataset_label == "Penmanshiel WT08" & model == "PatchTST", 0.034, label_nudge_x),
-    #label_nudge_x = ifelse(dataset_label == "Penmanshiel WT08" & model == "GRU", 0.006, label_nudge_x),
     label_nudge_y = ifelse(dataset_label == "Penmanshiel WT08" & model == "GRU", 0.011, label_nudge_y),
     label_nudge_x = ifelse(dataset_label == "ETTh1" & model == "ModernTCN", 0.017, label_nudge_x),
     label_nudge_y = ifelse(dataset_label == "ETTh1" & model == "ModernTCN", 0.03, label_nudge_y),

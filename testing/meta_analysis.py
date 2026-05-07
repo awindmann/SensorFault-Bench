@@ -19,6 +19,10 @@ from config_loader import (
     parse_explicit_cli_overrides,
 )
 from data.datasets import DATASET_REGISTRY, resolve_with_defaults
+from data.perturbations import (
+    PERTURBATION_REGISTRY,
+    require_perturbation_channel_scope,
+)
 from metrics.reference_normalized import (
     compute_reference_normalized_diagnostics,
     summarize_reference_normalized_anchor,
@@ -33,6 +37,7 @@ from pipelines.recipes import PIPELINE_RECIPE_PATHS_BY_METHOD
 from pipelines.selection import (
     expected_perturbation_coupling_from_args,
     is_fully_tested,
+    is_fixed_channel_fraction_complete,
     load_recipe_specs_for_scope,
     extract_recipe_defaults_for_scope,
     merge_recipe_defaults_for_scope,
@@ -69,7 +74,9 @@ from utils.parsing import (
     normalize_yaml_value,
     parse_backbone_run_ids,
     parse_bootstrap_ci_confidence_level,
+    parse_optional_unit_float,
     parse_optional_nonempty_string,
+    parse_perturbation_channel_fraction_max,
     CoreFigureRegistry,
     parse_required_positive_int,
     parse_reference_normalization_anchor_model,
@@ -83,6 +90,7 @@ from utils.parsing import (
     require_namespace_bool,
     require_namespace_nonempty_string,
     require_namespace_value,
+    require_nonempty_tag_value,
     require_nonempty_string_series,
     require_numeric_series,
     require_stage_tag,
@@ -97,12 +105,18 @@ from utils.parsing import (
     validate_raw_display_id_values,
 )
 from utils.scoring import (
+    build_canonical_degradation_context_signature,
     build_degradation_metric_key,
     build_degradation_metric_prefix,
+    build_fixed_channel_fraction_metric_key,
+    build_fixed_channel_fraction_tag_key,
     download_validated_degradation_artifact_bundle,
+    download_validated_fixed_channel_fraction_artifact_bundle,
     extract_required_degradation_scenario_metrics,
     extract_required_overall_degradation_metrics,
     require_float_metric,
+    require_logged_degradation_metric_bundle,
+    require_logged_fixed_channel_fraction_metric_bundle,
 )
 from utils.rng import derive_seed
 from visualizations.semantics import (
@@ -320,6 +334,53 @@ class AnalysisArtifacts:
 class RhoEffAttachmentResult:
     result_df: pd.DataFrame
     fit_summary_df: pd.DataFrame
+
+
+FIXED_CHANNEL_FRACTION_COLUMNS: tuple[str, ...] = (
+    "dataset",
+    "model_architecture",
+    "robustness_method",
+    "pipeline_id",
+    "run_id",
+    "data_config_signature",
+    "fixed_channel_fraction",
+    "eval_data_seed",
+    "n_test_samples",
+    "canonical_D_w",
+    "fixed_fraction_D_w",
+    "delta_D_w_fixed_fraction",
+    "canonical_D_mean",
+    "fixed_fraction_D_mean",
+    "delta_D_mean_fixed_fraction",
+    "canonical_worst_scenario",
+    "fixed_fraction_worst_scenario",
+    "canonical_channel_scoped_D_w",
+    "fixed_fraction_channel_scoped_D_w",
+    "delta_channel_scoped_D_w_fixed_fraction",
+    "canonical_channel_scoped_D_mean",
+    "fixed_fraction_channel_scoped_D_mean",
+    "delta_channel_scoped_D_mean_fixed_fraction",
+    "channel_scoped_scenario_count",
+    "all_scope_scenario_count",
+    "fixed_channel_count_min",
+    "fixed_channel_count_median",
+    "fixed_channel_count_max",
+    "canonical_context_signature",
+    "fixed_fraction_context_signature",
+)
+
+FIXED_CHANNEL_FRACTION_PAPER_SUMMARY_COLUMNS: tuple[str, ...] = (
+    "dataset",
+    "spearman_rho",
+    "weakest_family_agreement",
+    "core_method_sign_agreement",
+)
+
+_FIXED_CHANNEL_FRACTION_CORE_METHODS: tuple[str, ...] = (
+    "adversarial_training",
+    "ensemble",
+    "revin",
+)
 
 
 
@@ -1170,6 +1231,25 @@ def _build_method_scenario_delta_heatmap_figure_specs(
             f"{context}: missing required core-figure datasets {missing_datasets}. "
             f"Present core dataset row counts: {present_counts}."
         )
+    if full_coverage:
+        expected_cells = {
+            (dataset_key, method_key, scenario_key)
+            for dataset_key, _ in registry.dataset_spec
+            for method_key in registry.method_order
+            for scenario_key in registry.scenario_display_order
+        }
+        actual_cells = {
+            (str(dataset), str(method), str(scenario))
+            for dataset, method, scenario in core_scope_df.loc[
+                :, ["dataset", "robustness_method", "scenario"]
+            ].itertuples(index=False, name=None)
+        }
+        missing_cells = sorted(expected_cells - actual_cells)
+        if missing_cells:
+            raise ValueError(
+                f"{context}: missing required core dataset/method/scenario "
+                f"cell(s): {missing_cells[:5]}."
+            )
     dataset_spec = tuple(
         (dataset_key, dataset_label)
         for dataset_key, dataset_label in registry.dataset_spec
@@ -3180,6 +3260,757 @@ def _load_required_degradation_artifact_bundle(
         expected_clean_metric_value=expected_clean_metric_value,
         context_name=f"Run {run_id} degradation artifact bundle",
     )
+
+
+def _registered_channel_scope_for_scenario(
+    scenario_name: Any,
+    *,
+    context: str,
+) -> str:
+    scenario_key = parse_required_nonempty_string(
+        scenario_name,
+        key="scenario",
+        context=context,
+    )
+    if scenario_key not in PERTURBATION_REGISTRY:
+        raise ValueError(
+            f"{context}: scenario {scenario_key!r} is not registered in "
+            "PERTURBATION_REGISTRY."
+        )
+    return require_perturbation_channel_scope(
+        PERTURBATION_REGISTRY[scenario_key],
+        context=f"{context}: scenario {scenario_key!r}",
+    )
+
+
+def _fixed_channel_fraction_channel_scoped_values(
+    scenario_summary_df: pd.DataFrame,
+    *,
+    context: str,
+) -> dict[str, float | int]:
+    _require_columns(
+        scenario_summary_df,
+        {"scenario", "D"},
+        context=context,
+    )
+    if scenario_summary_df.empty:
+        raise ValueError(f"{context}: scenario_summary_df is empty.")
+    working = scenario_summary_df.copy()
+    working["scenario"] = working["scenario"].astype(str).str.strip()
+    working["channel_scope"] = [
+        _registered_channel_scope_for_scenario(
+            scenario_name,
+            context=context,
+        )
+        for scenario_name in working["scenario"]
+    ]
+    channel_scoped = working["channel_scope"].isin(["continuous", "discrete"])
+    channel_scoped_count = int(channel_scoped.sum())
+    all_scope_count = int((working["channel_scope"] == "all").sum())
+    if channel_scoped_count == 0:
+        return {
+            "D_w": float("nan"),
+            "D_mean": float("nan"),
+            "channel_scoped_scenario_count": 0,
+            "all_scope_scenario_count": all_scope_count,
+        }
+    d_values = pd.to_numeric(working.loc[channel_scoped, "D"], errors="raise")
+    return {
+        "D_w": float(d_values.max()),
+        "D_mean": float(d_values.mean()),
+        "channel_scoped_scenario_count": channel_scoped_count,
+        "all_scope_scenario_count": all_scope_count,
+    }
+
+
+def _fixed_channel_fraction_count_summary(
+    scenario_samples_df: pd.DataFrame,
+    *,
+    context: str,
+) -> dict[str, float]:
+    _require_columns(
+        scenario_samples_df,
+        {
+            "intensity_severity",
+            "channel_scope",
+            "derived_fixed_channel_count",
+        },
+        context=context,
+    )
+    scoped = scenario_samples_df.loc[
+        scenario_samples_df["channel_scope"].astype(str).str.strip().isin(
+            ["continuous", "discrete"]
+        )
+    ].copy()
+    positive = scoped.loc[
+        pd.to_numeric(scoped["intensity_severity"], errors="raise") > 0.0
+    ]
+    if positive.empty:
+        return {
+            "fixed_channel_count_min": float("nan"),
+            "fixed_channel_count_median": float("nan"),
+            "fixed_channel_count_max": float("nan"),
+        }
+    counts = pd.to_numeric(
+        positive["derived_fixed_channel_count"],
+        errors="raise",
+    )
+    return {
+        "fixed_channel_count_min": float(counts.min()),
+        "fixed_channel_count_median": float(counts.median()),
+        "fixed_channel_count_max": float(counts.max()),
+    }
+
+
+def _parse_fixed_channel_fraction_args(args: Any) -> tuple[float | None, float]:
+    max_fraction = parse_perturbation_channel_fraction_max(
+        require_namespace_value(args, key="perturbation_channel_fraction_max"),
+        key="perturbation_channel_fraction_max",
+    )
+    fixed_fraction = parse_optional_unit_float(
+        getattr(args, "fixed_channel_fraction", None),
+        key="fixed_channel_fraction",
+        max_value=max_fraction,
+    )
+    return fixed_fraction, max_fraction
+
+
+def _build_fixed_channel_fraction_table(
+    *,
+    result_df: pd.DataFrame,
+    winner_runs_by_id: Mapping[str, Any],
+    client: mlflow.MlflowClient,
+    args: Any,
+) -> pd.DataFrame:
+    fixed_fraction, max_fraction = _parse_fixed_channel_fraction_args(args)
+    if fixed_fraction is None:
+        return pd.DataFrame(columns=FIXED_CHANNEL_FRACTION_COLUMNS)
+    _require_columns(
+        result_df,
+        {
+            "dataset",
+            "model_architecture",
+            "robustness_method",
+            "pipeline_id",
+            "run_id",
+            "data_config_signature",
+        },
+        context="fixed-channel-fraction meta-analysis",
+    )
+    full_coverage = require_namespace_bool(args, key="full_coverage")
+    rows: list[dict[str, Any]] = []
+    skipped_rows: list[dict[str, str]] = []
+    for result_row in result_df.itertuples(index=False):
+        run_id = str(result_row.run_id)
+        run = winner_runs_by_id.get(run_id)
+        if run is None:
+            raise ValueError(
+                "fixed-channel-fraction meta-analysis cannot find canonical "
+                f"winner run {run_id!r} in winner_runs_by_id."
+            )
+        try:
+            complete = is_fixed_channel_fraction_complete(
+                run,
+                args=args,
+                client=client,
+                fixed_fraction=fixed_fraction,
+            )
+        except Exception as exc:
+            if full_coverage:
+                raise
+            skipped_rows.append(
+                {
+                    "dataset": str(result_row.dataset),
+                    "run_id": run_id,
+                    "reason": str(exc),
+                }
+            )
+            continue
+        if not complete:
+            reason = "missing_or_incomplete_fixed_channel_fraction"
+            if full_coverage:
+                raise ValueError(
+                    f"Run {run_id} is missing complete fixed-channel-fraction "
+                    f"outputs for fixed_channel_fraction={fixed_fraction}."
+                )
+            skipped_rows.append(
+                {
+                    "dataset": str(result_row.dataset),
+                    "run_id": run_id,
+                    "reason": reason,
+                }
+            )
+            continue
+
+        tags = run.data.tags
+        if tags is None:
+            raise ValueError(f"Run {run_id} is missing tags.")
+        params = run.data.params
+        if params is None:
+            raise ValueError(f"Run {run_id} is missing params.")
+        run_dataset = require_nonempty_tag_value(
+            tags,
+            key="dataset",
+            run_id=run_id,
+        )
+        if run_dataset != str(result_row.dataset):
+            raise ValueError(
+                "fixed-channel-fraction meta-analysis result row has "
+                f"dataset={str(result_row.dataset)!r} but run {run_id} is tagged "
+                f"dataset={run_dataset!r}."
+            )
+        run_data_config_signature = require_nonempty_tag_value(
+            tags,
+            key="data_config_signature",
+            run_id=run_id,
+        )
+        if run_data_config_signature != str(result_row.data_config_signature):
+            raise ValueError(
+                "fixed-channel-fraction meta-analysis result row has "
+                f"data_config_signature={str(result_row.data_config_signature)!r} but "
+                f"run {run_id} is tagged data_config_signature="
+                f"{run_data_config_signature!r}."
+            )
+        eval_context = require_degradation_eval_context_tags(tags, run_id=run_id)
+        bootstrap_ci_context = require_shared_anchor_bootstrap_ci_context_tags(
+            tags,
+            run_id=run_id,
+            require_seed=True,
+        )
+        params_signature = require_nonempty_tag_value(
+            tags,
+            key="perturbation_scenario_params_signature",
+            run_id=run_id,
+        )
+        canonical_context_signature = build_canonical_degradation_context_signature(
+            degradation_eval_context=eval_context,
+            bootstrap_ci_context=bootstrap_ci_context,
+            perturbation_scenario_params_signature=params_signature,
+        )
+        test_metric = str(eval_context["test_metric"])
+        idx_to_name = eval_context["perturbation_idx_name_map"]
+        canonical_worst_scenario = require_logged_degradation_metric_bundle(
+            run.data.metrics,
+            tags=tags,
+            params=params,
+            run_id=run_id,
+            test_metric=test_metric,
+            expected_idx_to_name=idx_to_name,
+        )
+        fixed_fraction_worst_scenario = (
+            require_logged_fixed_channel_fraction_metric_bundle(
+                run.data.metrics,
+                tags=tags,
+                run_id=run_id,
+                test_metric=test_metric,
+                fixed_channel_fraction=fixed_fraction,
+                perturbation_channel_fraction_max=max_fraction,
+                expected_idx_to_name=idx_to_name,
+            )
+        )
+        canonical_clean_df, _, canonical_summary_df = _load_required_degradation_artifact_bundle(
+            client=client,
+            run_id=run_id,
+            test_metric=test_metric,
+            eval_data_seed=int(eval_context["eval_data_seed"]),
+            expected_idx_to_name=idx_to_name,
+            expected_n_test_samples=int(eval_context["n_test_samples"]),
+            expected_clean_metric_value=run.data.metrics[f"{test_metric}_test"],
+        )
+        context_signature_tag = build_fixed_channel_fraction_tag_key(
+            fixed_channel_fraction=fixed_fraction,
+            perturbation_channel_fraction_max=max_fraction,
+            tag_name="context_signature",
+        )
+        fixed_fraction_context_signature = parse_required_nonempty_string(
+            tags.get(context_signature_tag),
+            key=context_signature_tag,
+            context=f"Run {run_id}",
+        )
+        _, fixed_fraction_samples_df, fixed_fraction_summary_df, _ = (
+            download_validated_fixed_channel_fraction_artifact_bundle(
+                client,
+                run_id=run_id,
+                test_metric=test_metric,
+                eval_data_seed=int(eval_context["eval_data_seed"]),
+                fixed_channel_fraction=fixed_fraction,
+                perturbation_channel_fraction_max=max_fraction,
+                expected_idx_to_name=idx_to_name,
+                expected_n_test_samples=int(eval_context["n_test_samples"]),
+                expected_clean_df=canonical_clean_df,
+                expected_context_signature=fixed_fraction_context_signature,
+                expected_perturbation_scenarios_signature=str(
+                    eval_context["perturbation_scenarios_signature"]
+                ),
+                expected_perturbation_scenario_params_signature=params_signature,
+                expected_canonical_context_signature=canonical_context_signature,
+                expected_bootstrap_ci_context=bootstrap_ci_context,
+                context_name=(
+                    f"Run {run_id} fixed-channel-fraction meta-analysis bundle"
+                ),
+            )
+        )
+        canonical_scoped = _fixed_channel_fraction_channel_scoped_values(
+            canonical_summary_df,
+            context=f"Run {run_id} canonical fixed-fraction comparison",
+        )
+        fixed_fraction_scoped = _fixed_channel_fraction_channel_scoped_values(
+            fixed_fraction_summary_df,
+            context=f"Run {run_id} fixed-fraction comparison",
+        )
+        count_summary = _fixed_channel_fraction_count_summary(
+            fixed_fraction_samples_df,
+            context=f"Run {run_id} fixed-fraction count summary",
+        )
+        canonical_d_w = require_float_metric(
+            run.data.metrics,
+            run_id=run_id,
+            metric_key=build_degradation_metric_key(
+                test_metric=test_metric,
+                metric_name="D_w",
+            ),
+        )
+        fixed_fraction_d_w = require_float_metric(
+            run.data.metrics,
+            run_id=run_id,
+            metric_key=build_fixed_channel_fraction_metric_key(
+                test_metric=test_metric,
+                fixed_channel_fraction=fixed_fraction,
+                perturbation_channel_fraction_max=max_fraction,
+                metric_name="D_w",
+            ),
+        )
+        canonical_d_mean = require_float_metric(
+            run.data.metrics,
+            run_id=run_id,
+            metric_key=build_degradation_metric_key(
+                test_metric=test_metric,
+                metric_name="D_mean",
+            ),
+        )
+        fixed_fraction_d_mean = require_float_metric(
+            run.data.metrics,
+            run_id=run_id,
+            metric_key=build_fixed_channel_fraction_metric_key(
+                test_metric=test_metric,
+                fixed_channel_fraction=fixed_fraction,
+                perturbation_channel_fraction_max=max_fraction,
+                metric_name="D_mean",
+            ),
+        )
+        row = {
+            "dataset": str(result_row.dataset),
+            "model_architecture": str(result_row.model_architecture),
+            "robustness_method": str(result_row.robustness_method),
+            "pipeline_id": str(result_row.pipeline_id),
+            "run_id": run_id,
+            "data_config_signature": str(result_row.data_config_signature),
+            "fixed_channel_fraction": float(fixed_fraction),
+            "eval_data_seed": int(eval_context["eval_data_seed"]),
+            "n_test_samples": int(eval_context["n_test_samples"]),
+            "canonical_D_w": float(canonical_d_w),
+            "fixed_fraction_D_w": float(fixed_fraction_d_w),
+            "delta_D_w_fixed_fraction": float(fixed_fraction_d_w - canonical_d_w),
+            "canonical_D_mean": float(canonical_d_mean),
+            "fixed_fraction_D_mean": float(fixed_fraction_d_mean),
+            "delta_D_mean_fixed_fraction": float(
+                fixed_fraction_d_mean - canonical_d_mean
+            ),
+            "canonical_worst_scenario": canonical_worst_scenario,
+            "fixed_fraction_worst_scenario": fixed_fraction_worst_scenario,
+            "canonical_channel_scoped_D_w": canonical_scoped["D_w"],
+            "fixed_fraction_channel_scoped_D_w": fixed_fraction_scoped["D_w"],
+            "delta_channel_scoped_D_w_fixed_fraction": (
+                fixed_fraction_scoped["D_w"] - canonical_scoped["D_w"]
+            ),
+            "canonical_channel_scoped_D_mean": canonical_scoped["D_mean"],
+            "fixed_fraction_channel_scoped_D_mean": fixed_fraction_scoped["D_mean"],
+            "delta_channel_scoped_D_mean_fixed_fraction": (
+                fixed_fraction_scoped["D_mean"] - canonical_scoped["D_mean"]
+            ),
+            "channel_scoped_scenario_count": int(
+                fixed_fraction_scoped["channel_scoped_scenario_count"]
+            ),
+            "all_scope_scenario_count": int(
+                fixed_fraction_scoped["all_scope_scenario_count"]
+            ),
+            **count_summary,
+            "canonical_context_signature": canonical_context_signature,
+            "fixed_fraction_context_signature": fixed_fraction_context_signature,
+        }
+        rows.append(row)
+
+    if skipped_rows:
+        warnings.warn(
+            "Fixed-channel-fraction meta-analysis omitted incomplete fixed-fraction rows "
+            f"in no-full-coverage mode. Skipped={len(skipped_rows)}. "
+            f"Examples: {skipped_rows[:5]}.",
+            stacklevel=2,
+        )
+    return pd.DataFrame(rows, columns=FIXED_CHANNEL_FRACTION_COLUMNS)
+
+
+def _fixed_channel_fraction_baseline_mask(df: pd.DataFrame) -> pd.Series:
+    return (
+        df["robustness_method"].astype(str).str.strip().eq("baseline")
+        & df["pipeline_id"].astype(str).str.strip().eq("baseline")
+    )
+
+
+def _agreement_token(matches: int, total: int) -> str:
+    if matches < 0 or total < 0 or matches > total:
+        raise ValueError(
+            f"Agreement counts must satisfy 0 <= matches <= total; got {matches}/{total}."
+        )
+    return f"{matches}/{total}"
+
+
+def _signed_delta_token(value: float) -> str:
+    numeric_value = float(value)
+    if not np.isfinite(numeric_value):
+        raise ValueError(f"Delta sign is undefined for non-finite value {numeric_value}.")
+    if numeric_value < 0.0:
+        return "negative"
+    if numeric_value > 0.0:
+        return "positive"
+    return "zero"
+
+
+def _fixed_fraction_scenario_family_lookup() -> dict[str, str]:
+    registry = _core_figure_registry()
+    lookup: dict[str, str] = {}
+    for family_name, scenario_names in registry.scenario_groups.items():
+        family_key = str(family_name).strip()
+        for scenario_name in scenario_names:
+            scenario_key = str(scenario_name).strip()
+            existing = lookup.get(scenario_key)
+            if existing is not None:
+                raise ValueError(
+                    f"Scenario {scenario_key!r} is mapped to multiple families: "
+                    f"{existing!r} and {family_key!r}."
+                )
+            lookup[scenario_key] = family_key
+    return lookup
+
+
+def _scenario_family_for_summary(
+    scenario_name: Any,
+    *,
+    family_lookup: Mapping[str, str],
+    context: str,
+) -> str:
+    scenario_key = parse_required_nonempty_string(
+        scenario_name,
+        key="scenario",
+        context=context,
+    )
+    family = family_lookup.get(scenario_key)
+    if family is None:
+        raise ValueError(
+            f"{context}: scenario {scenario_key!r} is not mapped by "
+            "configs/reporting/core_figures.yaml CORE_SCENARIO_GROUPS."
+        )
+    return family
+
+
+def _baseline_rank_spearman_rho(
+    baseline_df: pd.DataFrame,
+    *,
+    dataset_name: str,
+    full_coverage: bool,
+) -> float:
+    context = (
+        "fixed-channel-fraction paper summary Spearman rho "
+        f"for dataset={dataset_name}"
+    )
+    canonical_values = require_numeric_series(
+        baseline_df["canonical_D_w"],
+        column_name="canonical_D_w",
+        context=context,
+    )
+    fixed_fraction_values = require_numeric_series(
+        baseline_df["fixed_fraction_D_w"],
+        column_name="fixed_fraction_D_w",
+        context=context,
+    )
+    if len(baseline_df) < 2:
+        if full_coverage:
+            raise ValueError(
+                f"{context} is undefined because at least two baseline rows are required."
+            )
+        return float("nan")
+    if (
+        canonical_values.nunique(dropna=False) < 2
+        or fixed_fraction_values.nunique(dropna=False) < 2
+    ):
+        if full_coverage:
+            raise ValueError(
+                f"{context} is undefined because baseline D_w ranks are constant."
+            )
+        return float("nan")
+    rho = canonical_values.corr(fixed_fraction_values, method="spearman")
+    if not np.isfinite(float(rho)):
+        if full_coverage:
+            raise ValueError(f"{context} is undefined.")
+        return float("nan")
+    return float(rho)
+
+
+def _weakest_family_agreement(
+    baseline_df: pd.DataFrame,
+    *,
+    family_lookup: Mapping[str, str],
+    dataset_name: str,
+) -> str:
+    matches = 0
+    total = 0
+    for row in baseline_df.itertuples(index=False):
+        context = (
+            "fixed-channel-fraction paper summary weakest-family agreement "
+            f"for dataset={dataset_name}, model_architecture={row.model_architecture}"
+        )
+        canonical_family = _scenario_family_for_summary(
+            row.canonical_worst_scenario,
+            family_lookup=family_lookup,
+            context=f"{context} canonical",
+        )
+        fixed_fraction_family = _scenario_family_for_summary(
+            row.fixed_fraction_worst_scenario,
+            family_lookup=family_lookup,
+            context=f"{context} fixed fraction",
+        )
+        total += 1
+        if canonical_family == fixed_fraction_family:
+            matches += 1
+    return _agreement_token(matches, total)
+
+
+def _core_method_sign_agreement(
+    dataset_df: pd.DataFrame,
+    *,
+    dataset_name: str,
+    full_coverage: bool,
+) -> str:
+    baseline_df = dataset_df.loc[_fixed_channel_fraction_baseline_mask(dataset_df)].copy()
+    baseline_join_keys = [
+        "dataset",
+        "model_architecture",
+        "data_config_signature",
+        "fixed_channel_fraction",
+    ]
+    _assert_no_duplicates(
+        baseline_df,
+        baseline_join_keys,
+        context=(
+            "fixed-channel-fraction paper summary baseline rows are not unique per "
+            f"{baseline_join_keys}"
+        ),
+    )
+    baseline_join_df = baseline_df[
+        baseline_join_keys
+        + [
+            "canonical_D_w",
+            "fixed_fraction_D_w",
+        ]
+    ].copy()
+
+    method_df = dataset_df.loc[
+        dataset_df["robustness_method"].isin(_FIXED_CHANNEL_FRACTION_CORE_METHODS)
+    ].copy()
+    if method_df.empty:
+        if full_coverage:
+            raise ValueError(
+                "fixed-channel-fraction paper summary requires all core methods "
+                f"for dataset={dataset_name}; missing "
+                f"{list(_FIXED_CHANNEL_FRACTION_CORE_METHODS)}."
+            )
+        return _agreement_token(0, 0)
+    present_methods = set(method_df["robustness_method"].unique())
+    missing_methods = [
+        method_name
+        for method_name in _FIXED_CHANNEL_FRACTION_CORE_METHODS
+        if method_name not in present_methods
+    ]
+    if missing_methods and full_coverage:
+        raise ValueError(
+            "fixed-channel-fraction paper summary requires all core methods "
+            f"for dataset={dataset_name}; missing {missing_methods}."
+        )
+    method_identity_keys = baseline_join_keys + ["robustness_method"]
+    _assert_no_duplicates(
+        method_df,
+        method_identity_keys,
+        context=(
+            "fixed-channel-fraction paper summary core-method rows are not unique per "
+            f"{method_identity_keys}"
+        ),
+    )
+    merged = method_df.merge(
+        baseline_join_df,
+        on=baseline_join_keys,
+        how="left",
+        suffixes=("_method", "_baseline"),
+        indicator=True,
+    )
+    missing_baseline = merged["_merge"] != "both"
+    if missing_baseline.any():
+        examples = _sample_records(
+            merged.loc[missing_baseline],
+            method_identity_keys,
+        )
+        raise ValueError(
+            "fixed-channel-fraction paper summary cannot compute core-method signs "
+            f"for dataset={dataset_name}: missing paired baseline rows. "
+            f"Examples: {examples}."
+        )
+    merged["canonical_delta_D_w"] = (
+        pd.to_numeric(merged["canonical_D_w_method"], errors="raise")
+        - pd.to_numeric(merged["canonical_D_w_baseline"], errors="raise")
+    )
+    merged["fixed_fraction_delta_D_w"] = (
+        pd.to_numeric(merged["fixed_fraction_D_w_method"], errors="raise")
+        - pd.to_numeric(merged["fixed_fraction_D_w_baseline"], errors="raise")
+    )
+
+    matches = 0
+    total = 0
+    for method_name in _FIXED_CHANNEL_FRACTION_CORE_METHODS:
+        method_rows = merged.loc[merged["robustness_method"] == method_name]
+        if method_rows.empty:
+            continue
+        canonical_mean_delta = float(method_rows["canonical_delta_D_w"].mean())
+        fixed_fraction_mean_delta = float(method_rows["fixed_fraction_delta_D_w"].mean())
+        total += 1
+        if _signed_delta_token(canonical_mean_delta) == _signed_delta_token(
+            fixed_fraction_mean_delta
+        ):
+            matches += 1
+    return _agreement_token(matches, total)
+
+
+def _build_fixed_channel_fraction_paper_summary_table(
+    fixed_channel_fraction_df: pd.DataFrame,
+    *,
+    full_coverage: bool = True,
+) -> pd.DataFrame:
+    """Build the compact appendix table from the validated fixed-fraction table."""
+    if fixed_channel_fraction_df.empty:
+        return pd.DataFrame(columns=FIXED_CHANNEL_FRACTION_PAPER_SUMMARY_COLUMNS)
+    required_cols = {
+        "dataset",
+        "model_architecture",
+        "robustness_method",
+        "pipeline_id",
+        "data_config_signature",
+        "fixed_channel_fraction",
+        "canonical_D_w",
+        "fixed_fraction_D_w",
+        "canonical_worst_scenario",
+        "fixed_fraction_worst_scenario",
+    }
+    _require_columns(
+        fixed_channel_fraction_df,
+        required_cols,
+        context="fixed-channel-fraction paper summary",
+    )
+    work = fixed_channel_fraction_df.copy()
+    identity_sample_cols = [
+        "dataset",
+        "model_architecture",
+        "robustness_method",
+        "pipeline_id",
+        "data_config_signature",
+    ]
+    for column in (
+        "dataset",
+        "model_architecture",
+        "robustness_method",
+        "pipeline_id",
+        "data_config_signature",
+    ):
+        work[column] = require_nonempty_string_series(
+            work,
+            column,
+            context="fixed-channel-fraction paper summary",
+            sample_cols=identity_sample_cols,
+        )
+        null_like_mask = work[column].str.lower().isin({"nan", "none"})
+        if null_like_mask.any():
+            examples = _sample_records(
+                work.loc[null_like_mask],
+                identity_sample_cols,
+            )
+            raise ValueError(
+                "fixed-channel-fraction paper summary requires real "
+                f"{column!r} values, not null-like string tokens. "
+                f"Examples: {examples}."
+            )
+    work["fixed_channel_fraction"] = require_numeric_series(
+        work["fixed_channel_fraction"],
+        column_name="fixed_channel_fraction",
+        context="fixed-channel-fraction paper summary",
+    ).astype(float)
+    invalid_fraction_mask = (
+        (work["fixed_channel_fraction"] <= 0.0)
+        | (work["fixed_channel_fraction"] > 1.0)
+    )
+    if invalid_fraction_mask.any():
+        examples = _sample_records(
+            work.loc[invalid_fraction_mask],
+            identity_sample_cols + ["fixed_channel_fraction"],
+        )
+        raise ValueError(
+            "fixed-channel-fraction paper summary requires "
+            "0 < fixed_channel_fraction <= 1.0. "
+            f"Examples: {examples}."
+        )
+    fixed_fractions = sorted(work["fixed_channel_fraction"].drop_duplicates().tolist())
+    if len(fixed_fractions) != 1:
+        raise ValueError(
+            "fixed-channel-fraction paper summary requires a single "
+            f"fixed_channel_fraction value; got {fixed_fractions}."
+        )
+    work["canonical_D_w"] = require_numeric_series(
+        work["canonical_D_w"],
+        column_name="canonical_D_w",
+        context="fixed-channel-fraction paper summary",
+    )
+    work["fixed_fraction_D_w"] = require_numeric_series(
+        work["fixed_fraction_D_w"],
+        column_name="fixed_fraction_D_w",
+        context="fixed-channel-fraction paper summary",
+    )
+
+    rows: list[dict[str, Any]] = []
+    family_lookup = _fixed_fraction_scenario_family_lookup()
+    for dataset_name, dataset_df in work.groupby("dataset", sort=True):
+        baseline_df = dataset_df.loc[_fixed_channel_fraction_baseline_mask(dataset_df)]
+        if baseline_df.empty:
+            raise ValueError(
+                "fixed-channel-fraction paper summary requires at least one baseline "
+                f"row for dataset={dataset_name}."
+            )
+        rows.append(
+            {
+                "dataset": dataset_name,
+                "spearman_rho": _baseline_rank_spearman_rho(
+                    baseline_df,
+                    dataset_name=str(dataset_name),
+                    full_coverage=full_coverage,
+                ),
+                "weakest_family_agreement": _weakest_family_agreement(
+                    baseline_df,
+                    family_lookup=family_lookup,
+                    dataset_name=str(dataset_name),
+                ),
+                "core_method_sign_agreement": _core_method_sign_agreement(
+                    dataset_df,
+                    dataset_name=str(dataset_name),
+                    full_coverage=full_coverage,
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=FIXED_CHANNEL_FRACTION_PAPER_SUMMARY_COLUMNS)
 
 
 def _select_forecast_extreme_rows(
@@ -7236,6 +8067,20 @@ def meta_analysis(
             "Meta-analysis scenario_samples_df is empty. "
             "Expected canonical scenario_samples artifacts for tested winner-pool runs."
         )
+    fixed_channel_fraction_df = (
+        _build_fixed_channel_fraction_table(
+            result_df=result_df,
+            winner_runs_by_id=winner_runs_by_id,
+            client=client,
+            args=args,
+        )
+    )
+    fixed_channel_fraction_paper_summary_df = (
+        _build_fixed_channel_fraction_paper_summary_table(
+            fixed_channel_fraction_df,
+            full_coverage=require_namespace_bool(args, key="full_coverage"),
+        )
+    )
     severity_profile_df = _build_binned_degradation_profile_df(scenario_samples_df)
     reference_normalization_anchor_model = parse_reference_normalization_anchor_model(
         require_namespace_value(args, key="reference_normalization_anchor_model"),
@@ -8847,6 +9692,18 @@ def meta_analysis(
             ),
             "selection_margin": (selection_margin_df, "selection_margin.csv"),
         }
+        fixed_channel_fraction_for_tables, _ = _parse_fixed_channel_fraction_args(
+            args
+        )
+        if fixed_channel_fraction_for_tables is not None:
+            tables["fixed_channel_fraction"] = (
+                fixed_channel_fraction_df,
+                "fixed_channel_fraction.csv",
+            )
+            tables["fixed_channel_fraction_paper_summary"] = (
+                fixed_channel_fraction_paper_summary_df,
+                "fixed_channel_fraction_paper_summary.csv",
+            )
         scenario_delta_table_specs = [
             ("D", "scenario_d_delta", "scenario_d_delta.csv"),
             (
@@ -8875,7 +9732,11 @@ def meta_analysis(
         with tempfile.TemporaryDirectory(prefix="robust-") as tmpdir:
             for _, (df_obj, filename) in tables.items():
                 path = os.path.join(tmpdir, filename)
-                df_obj.to_csv(path)
+                write_index = filename not in {
+                    "fixed_channel_fraction.csv",
+                    "fixed_channel_fraction_paper_summary.csv",
+                }
+                df_obj.to_csv(path, index=write_index)
             mlflow.log_artifacts(tmpdir, artifact_path="tables")
 
         figure_specs: list[FigureArtifactSpec] = []

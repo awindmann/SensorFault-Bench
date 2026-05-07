@@ -99,6 +99,10 @@ Current expected inputs:
 The forecast trace CSVs include only the forecast windows shown in Figures 3 and 4.
 They are plotting inputs, not full evaluation replay files, and the larger
 per-sample trace outputs from the analysis run are intentionally omitted.
+These bundled trace extracts predate the current replay trace schema and do not
+store a `robustness_method` column. When replaying them with
+`scripts/render_forecast_plots.py from-traces`, pass
+`--missing-robustness-method baseline` explicitly.
 
 ## Running the figures
 

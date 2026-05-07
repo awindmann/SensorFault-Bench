@@ -21,6 +21,11 @@ from pipelines.selection import (
 from testing.meta_analysis import meta_analysis
 from testing.shared import _configure_runtime_loggers_for_testing
 from utils.env import set_mlflow_storage_env
+from utils.parsing import (
+    parse_optional_unit_float,
+    parse_perturbation_channel_fraction_max,
+    require_namespace_value,
+)
 
 
 def _recipe_param_defaults(
@@ -43,6 +48,22 @@ def prepare_analysis_entrypoint_args(
     defaults = merge_recipe_defaults_for_scope(defaults, extracted_defaults)
     parser = build_parser(defaults)
     args = parser.parse_args(list(explicit_cli_args))
+    fixed_fraction = parse_optional_unit_float(
+        getattr(args, "fixed_channel_fraction", None),
+        key="fixed_channel_fraction",
+    )
+    args.fixed_channel_fraction = fixed_fraction
+    if fixed_fraction is not None:
+        max_fraction = parse_perturbation_channel_fraction_max(
+            require_namespace_value(args, key="perturbation_channel_fraction_max"),
+            key="perturbation_channel_fraction_max",
+        )
+        args.perturbation_channel_fraction_max = max_fraction
+        args.fixed_channel_fraction = parse_optional_unit_float(
+            fixed_fraction,
+            key="fixed_channel_fraction",
+            max_value=max_fraction,
+        )
     args._explicit_cli_args = explicit_cli_args
 
     args._recipe_param_overrides = parse_explicit_cli_overrides(

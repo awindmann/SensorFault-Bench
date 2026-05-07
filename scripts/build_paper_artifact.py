@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1115,13 +1116,34 @@ def build_paper_artifact(
     if not source_root.is_dir():
         raise FileNotFoundError(f"source root does not exist: {source_root}")
 
+    preserved_r_tmp: tempfile.TemporaryDirectory[str] | None = None
+    preserved_r_tree: Path | None = None
     if output_root.exists():
         if not force:
             raise FileExistsError(
                 f"{output_root} already exists. Pass --force to replace it."
             )
-        shutil.rmtree(output_root)
+        existing_r_tree = output_root / "R"
+        if existing_r_tree.exists():
+            preserved_r_tmp = tempfile.TemporaryDirectory(
+                prefix="sensorfault-paper-artifact-r-"
+            )
+            preserved_r_tree = Path(preserved_r_tmp.name) / "R"
+            shutil.move(str(existing_r_tree), str(preserved_r_tree))
+        try:
+            shutil.rmtree(output_root)
+        except Exception:
+            if preserved_r_tree is not None and preserved_r_tree.exists():
+                output_root.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(preserved_r_tree), str(existing_r_tree))
+            if preserved_r_tmp is not None:
+                preserved_r_tmp.cleanup()
+            raise
     output_root.mkdir(parents=True)
+    if preserved_r_tree is not None:
+        shutil.move(str(preserved_r_tree), str(output_root / "R"))
+    if preserved_r_tmp is not None:
+        preserved_r_tmp.cleanup()
 
     contexts: dict[str, dict[str, Any]] = {}
     table_records: list[dict[str, Any]] = []

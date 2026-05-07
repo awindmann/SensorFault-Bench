@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import math
+from decimal import Decimal
 from dataclasses import dataclass
 from numbers import Integral
 from pathlib import Path
@@ -2952,6 +2953,63 @@ def parse_perturbation_channel_fraction_max(
 ) -> float:
     """Parse and validate maximum affected-channel fraction."""
     return _parse_required_positive_bounded_float(value, key=key, max_value=1.0)
+
+
+def parse_optional_unit_float(
+    value: Any,
+    *,
+    key: str,
+    max_value: float = 1.0,
+) -> Optional[float]:
+    """Parse an optional finite float satisfying 0 < value <= max_value."""
+    parsed_max_value = _parse_required_positive_bounded_float(
+        max_value,
+        key=f"{key}_max_value",
+        max_value=1.0,
+    )
+    if value is None:
+        return None
+    if isinstance(value, str):
+        token, lowered = _normalize_token(value)
+        if lowered in ("none", "null"):
+            return None
+        if token == "":
+            raise ValueError(f"{key} must not be empty; use null/None when unset.")
+    try:
+        return _parse_required_positive_bounded_float(
+            value,
+            key=key,
+            max_value=parsed_max_value,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"{key} must be a finite float satisfying 0 < {key} <= "
+            f"{parsed_max_value}; got {value!r}."
+        ) from exc
+
+
+def _canonical_float_token(value: float) -> str:
+    normalized = Decimal(str(float(value))).normalize()
+    token = format(normalized, "f")
+    if "." in token:
+        token = token.rstrip("0").rstrip(".")
+    if token == "-0":
+        token = "0"
+    return token
+
+
+def format_fixed_channel_fraction_token(
+    value: Any,
+    *,
+    key: str = "fixed_channel_fraction",
+    max_value: float = 1.0,
+) -> str:
+    """Build the canonical fraction token used in ablation metric and artifact paths."""
+    parsed = parse_optional_unit_float(value, key=key, max_value=max_value)
+    if parsed is None:
+        raise ValueError(f"{key} is required for fixed-channel-fraction paths.")
+    fraction_token = _canonical_float_token(parsed).replace(".", "p")
+    return f"fraction_{fraction_token}"
 
 
 def parse_train_perturbation_probability(

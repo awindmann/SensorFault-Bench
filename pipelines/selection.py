@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
+import tempfile
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import pandas as pd
@@ -44,18 +46,24 @@ from utils.parsing import (
     require_robustness_results_complete_tag,
     require_shared_anchor_bootstrap_ci_context_from_args,
     require_shared_anchor_bootstrap_ci_context_tags,
+    parse_optional_unit_float,
     parse_perturbation_channel_fraction_max,
     parse_perturbation_idx_name_map,
     parse_perturbation_scenarios,
     resolve_effective_eval_data_seed,
+    require_tested_param,
     require_namespace_bool,
     require_namespace_value,
     require_nonempty_tag_value,
     require_perturbation_coupling_tags,
 )
 from utils.scoring import (
+    build_canonical_degradation_context_signature,
+    build_fixed_channel_fraction_tag_key,
     download_validated_degradation_artifact_bundle,
+    download_validated_fixed_channel_fraction_artifact_bundle,
     require_logged_degradation_metric_bundle,
+    require_logged_fixed_channel_fraction_metric_bundle,
 )
 
 
@@ -1093,21 +1101,59 @@ def _resolve_lineage_baseline_hparam_spec(
 
 
 def _extract_required_baseline_hparams(
+    client: Any,
     run,
     *,
+    arch: str,
     hparam_spec: Mapping[str, Any],
+    cache: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     run_id = run.info.run_id
-    tags = run.data.tags
-    if tags is None:
+    if client is None:
         raise ValueError(
-            f"Run {run_id} is missing tags required for baseline-hparams lineage checks."
+            "Lineage classification for inherit_baseline requires an artifact client "
+            "to read hparams.json."
         )
-    return extract_required_typed_hparams(
-        tags,
+    if cache is not None and run_id in cache:
+        return dict(cache[run_id])
+    with tempfile.TemporaryDirectory(prefix="robust-lineage-") as tmpdir:
+        try:
+            artifact_path = client.download_artifacts(
+                run_id,
+                "hparams.json",
+                dst_path=tmpdir,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Run {run_id} is missing required hparams.json for "
+                f"baseline-hparams lineage checks on architecture '{arch}'."
+            ) from exc
+        try:
+            with open(artifact_path, encoding="utf-8") as handle:
+                hparams = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Run {run_id} hparams.json is not valid JSON for "
+                f"baseline-hparams lineage checks on architecture '{arch}'."
+            ) from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Run {run_id} hparams.json could not be read for "
+                f"baseline-hparams lineage checks on architecture '{arch}'."
+            ) from exc
+    if not isinstance(hparams, Mapping):
+        raise ValueError(
+            f"Run {run_id} hparams.json must contain a mapping for "
+            f"baseline-hparams lineage checks on architecture '{arch}'."
+        )
+    typed_hparams = extract_required_typed_hparams(
+        hparams,
         hparam_spec,
         context=f"Run {run_id} baseline-hparams lineage extraction",
     )
+    if cache is not None:
+        cache[run_id] = dict(typed_hparams)
+    return typed_hparams
 
 
 def classify_lineage_run(
@@ -1118,6 +1164,8 @@ def classify_lineage_run(
     sorted_base_runs_by_key: Mapping[Any, Sequence[Any]],
     baseline_hparam_specs_by_arch: Optional[Mapping[str, Any]] = None,
     scoped_train_run_ids_by_key: Optional[Mapping[tuple[str, str], set[str]]] = None,
+    artifact_client: Any | None = None,
+    hparams_artifact_cache: dict[str, dict[str, Any]] | None = None,
 ) -> Optional[str]:
     tags = run.data.tags
     if tags is None:
@@ -1198,12 +1246,18 @@ def classify_lineage_run(
             baseline_hparam_specs_by_arch=baseline_hparam_specs_by_arch,
         )
         run_hparams = _extract_required_baseline_hparams(
+            artifact_client,
             run,
+            arch=arch,
             hparam_spec=hparam_spec,
+            cache=hparams_artifact_cache,
         )
         current_hparams = _extract_required_baseline_hparams(
+            artifact_client,
             current_baseline_run,
+            arch=arch,
             hparam_spec=hparam_spec,
+            cache=hparams_artifact_cache,
         )
         if run_hparams != current_hparams:
             return "baseline_changed"
@@ -1439,7 +1493,9 @@ def is_fully_tested(run, *, args, client: Any | None = None) -> bool:
     params = run.data.params
     if params is None:
         return False
-    if params.get("tested") != "true":
+    if "tested" not in params:
+        return False
+    if not require_tested_param(params, run_id=run.info.run_id):
         return False
     tags = run.data.tags
     if tags is None:
@@ -1549,6 +1605,168 @@ def is_fully_tested(run, *, args, client: Any | None = None) -> bool:
     return True
 
 
+def is_fixed_channel_fraction_complete(
+    run,
+    *,
+    args,
+    client: Any,
+    fixed_fraction: Any,
+) -> bool:
+    """Return whether a run has a complete fixed-channel-fraction bundle."""
+    if client is None:
+        raise ValueError(
+            "client is required for fixed-channel-fraction completion because "
+            "completion validation must read context.json and artifacts."
+        )
+    if not is_fully_tested(run, args=args, client=client):
+        return False
+    tags = run.data.tags
+    if tags is None:
+        raise ValueError(
+            f"Run {run.info.run_id} is missing tags required for fixed-channel-fraction "
+            "completion."
+        )
+    metrics = run.data.metrics
+    if metrics is None:
+        raise ValueError(
+            f"Run {run.info.run_id} is missing metrics required for fixed-channel-fraction "
+            "completion."
+        )
+    max_fraction = parse_perturbation_channel_fraction_max(
+        require_namespace_value(args, key="perturbation_channel_fraction_max"),
+        key="args.perturbation_channel_fraction_max",
+    )
+    parsed_fraction = parse_optional_unit_float(
+        fixed_fraction,
+        key="fixed_channel_fraction",
+        max_value=max_fraction,
+    )
+    if parsed_fraction is None:
+        raise ValueError("fixed_fraction is required for fixed-channel-fraction completion.")
+
+    run_eval_context = require_degradation_eval_context_tags(
+        tags,
+        run_id=run.info.run_id,
+    )
+    run_bootstrap_ci_context = require_shared_anchor_bootstrap_ci_context_tags(
+        tags,
+        run_id=run.info.run_id,
+        require_seed=True,
+    )
+    run_params_signature = require_nonempty_tag_value(
+        tags,
+        key="perturbation_scenario_params_signature",
+        run_id=run.info.run_id,
+    )
+    canonical_context_signature = build_canonical_degradation_context_signature(
+        degradation_eval_context=run_eval_context,
+        bootstrap_ci_context=run_bootstrap_ci_context,
+        perturbation_scenario_params_signature=run_params_signature,
+    )
+    complete_tag = build_fixed_channel_fraction_tag_key(
+        fixed_channel_fraction=parsed_fraction,
+        perturbation_channel_fraction_max=max_fraction,
+        tag_name="complete",
+    )
+    complete_value_raw = tags.get(complete_tag)
+    if complete_value_raw is None:
+        return False
+    complete_value = str(complete_value_raw).strip().lower()
+    if complete_value == "false":
+        return False
+    if complete_value != "true":
+        raise ValueError(
+            f"Run {run.info.run_id} has malformed fixed-channel-fraction "
+            f"completion tag {complete_tag}={complete_value_raw!r}."
+        )
+    fraction_tag = build_fixed_channel_fraction_tag_key(
+        fixed_channel_fraction=parsed_fraction,
+        perturbation_channel_fraction_max=max_fraction,
+        tag_name="fixed_channel_fraction",
+    )
+    logged_fraction = parse_optional_unit_float(
+        require_nonempty_tag_value(
+            tags,
+            key=fraction_tag,
+            run_id=run.info.run_id,
+        ),
+        key=fraction_tag,
+        max_value=max_fraction,
+    )
+    if logged_fraction is None:
+        raise ValueError(
+            f"Run {run.info.run_id} has complete fixed-channel-fraction metadata but "
+            f"{fraction_tag} is null."
+        )
+    if abs(float(logged_fraction) - float(parsed_fraction)) > 1e-12:
+        raise ValueError(
+            f"Run {run.info.run_id} has complete fixed-channel-fraction metadata for "
+            f"{fraction_tag}={logged_fraction}, expected {parsed_fraction}."
+        )
+    context_signature_tag = build_fixed_channel_fraction_tag_key(
+        fixed_channel_fraction=parsed_fraction,
+        perturbation_channel_fraction_max=max_fraction,
+        tag_name="context_signature",
+    )
+    context_signature = require_nonempty_tag_value(
+        tags,
+        key=context_signature_tag,
+        run_id=run.info.run_id,
+    )
+
+    require_logged_fixed_channel_fraction_metric_bundle(
+        metrics,
+        tags=tags,
+        run_id=run.info.run_id,
+        test_metric=str(run_eval_context["test_metric"]),
+        fixed_channel_fraction=parsed_fraction,
+        perturbation_channel_fraction_max=max_fraction,
+        expected_idx_to_name=run_eval_context["perturbation_idx_name_map"],
+    )
+    try:
+        test_metric = str(run_eval_context["test_metric"])
+        canonical_clean_df, _, _ = download_validated_degradation_artifact_bundle(
+            client,
+            run_id=run.info.run_id,
+            test_metric=test_metric,
+            eval_data_seed=int(run_eval_context["eval_data_seed"]),
+            expected_idx_to_name=run_eval_context["perturbation_idx_name_map"],
+            expected_n_test_samples=int(run_eval_context["n_test_samples"]),
+            expected_clean_metric_value=metrics[f"{test_metric}_test"],
+            context_name=(
+                f"Run {run.info.run_id} canonical degradation artifacts for "
+                "fixed-channel-fraction completion"
+            ),
+        )
+        download_validated_fixed_channel_fraction_artifact_bundle(
+            client,
+            run_id=run.info.run_id,
+            test_metric=test_metric,
+            eval_data_seed=int(run_eval_context["eval_data_seed"]),
+            fixed_channel_fraction=parsed_fraction,
+            perturbation_channel_fraction_max=max_fraction,
+            expected_idx_to_name=run_eval_context["perturbation_idx_name_map"],
+            expected_n_test_samples=int(run_eval_context["n_test_samples"]),
+            expected_clean_df=canonical_clean_df,
+            expected_context_signature=context_signature,
+            expected_perturbation_scenarios_signature=str(
+                run_eval_context["perturbation_scenarios_signature"]
+            ),
+            expected_perturbation_scenario_params_signature=run_params_signature,
+            expected_canonical_context_signature=canonical_context_signature,
+            expected_bootstrap_ci_context=run_bootstrap_ci_context,
+            context_name=(
+                f"Run {run.info.run_id} fixed-channel-fraction artifacts"
+            ),
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Run {run.info.run_id} has fixed-channel-fraction completion tag but "
+            f"invalid artifacts: {exc}"
+        ) from exc
+    return True
+
+
 __all__ = [
     "CoverageMismatchError",
     "PIPELINE_CONFIGS_DIR",
@@ -1559,6 +1777,7 @@ __all__ = [
     "expected_perturbation_coupling_from_args",
     "extract_recipe_defaults_for_scope",
     "is_fully_tested",
+    "is_fixed_channel_fraction_complete",
     "load_benchmark_method_architecture_applicability",
     "load_benchmark_recipe_specs_for_scope",
     "load_recipe_specs_for_scope",

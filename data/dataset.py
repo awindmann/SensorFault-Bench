@@ -372,6 +372,8 @@ class PerturbedDataset(Dataset):
             rng,
             self.cont_idx,
             self.disc_idx,
+            channel_count_mode="severity",
+            channel_count_value=sev,
         )
 
         affected_channels_tensor = torch.full((self.base_ds.n_channels,), -1, dtype=torch.long)
@@ -559,5 +561,7 @@ class TrainPerturbedDataset(Dataset):
             generator,
             self.cont_idx,
             self.disc_idx,
+            channel_count_mode="severity",
+            channel_count_value=sev,
         )
         return x_pert, y

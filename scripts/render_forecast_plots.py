@@ -39,6 +39,10 @@ FORECAST_EXTREME_COLUMNS = {
     "run_id",
     "model_architecture",
     "backbone_architecture",
+    "robustness_method",
+    "pipeline_method",
+    "pipeline_kind",
+    "pipeline_id",
     "sample_id",
     "source_sample_idx",
     "pert_idx",
@@ -426,7 +430,13 @@ def _normalize_sample(
         value = _optional_present(sample, (key,))
         if value is not None:
             normalized[key] = float(value)
-    for key in ("run_id", "pipeline_id", "robustness_method", "pipeline_method"):
+    for key in (
+        "run_id",
+        "pipeline_id",
+        "pipeline_kind",
+        "robustness_method",
+        "pipeline_method",
+    ):
         value = _optional_present(sample, (key,))
         if value is not None:
             normalized[key] = parse_required_nonempty_string(value, key=f"{context}.{key}")
@@ -833,6 +843,7 @@ def _require_run_matches_sample(run, sample: Mapping[str, Any]) -> None:
     )
     for sample_key, tag_key in (
         ("pipeline_method", "pipeline_method"),
+        ("pipeline_kind", "pipeline_kind"),
         ("pipeline_id", "pipeline_id"),
     ):
         expected_value = sample.get(sample_key)

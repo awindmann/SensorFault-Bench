@@ -611,8 +611,8 @@
       {
         "path": "R/README.md",
         "role": "R figure reproduction subartifact file",
-        "sha256": "9429d8d2a91309184efb20698e5a9ac6963a26434e73a9c6ce88c00f2d60f25d",
-        "size_bytes": 3804
+        "sha256": "43dddbe375818fd93f39968f8e019a438b10846e9cee48e3b90c149e44edaba4",
+        "size_bytes": 4049
       },
       {
         "path": "R/code/Figure_2_backbone_scenario_heatmap.R",
@@ -623,8 +623,8 @@
       {
         "path": "R/code/Figure_3_forecast_short_term.R",
         "role": "R figure reproduction subartifact file",
-        "sha256": "5b57353a31cfa4f8208f373fbb3dfb4ee4f0ceadc34213b9b56f38ddacc9d2b0",
-        "size_bytes": 21134
+        "sha256": "2bc4e067b0a2a9effc0d600df5697b41f26726a0355e3e39a22223997cf75553",
+        "size_bytes": 20787
       },
       {
         "path": "R/code/Figure_4_forecast_long_term.R",
@@ -635,8 +635,8 @@
       {
         "path": "R/code/Figure_5_trade_off_views.R",
         "role": "R figure reproduction subartifact file",
-        "sha256": "2103d996059b35b112f5dff7ad6ed7a9b29375ffabac15c679ec401e14dc6b93",
-        "size_bytes": 25740
+        "sha256": "0c6eeffc1937be4dd74dc0fcff1102169a408068d4e9124f33e7d29caeafed09",
+        "size_bytes": 22910
       },
       {
         "path": "R/code/Figure_6_trajectories.R",

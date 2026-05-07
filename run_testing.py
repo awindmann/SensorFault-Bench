@@ -25,7 +25,10 @@ from testing.evaluation import test_on_dataset
 from testing.shared import _configure_runtime_loggers_for_testing
 from utils.env import set_mlflow_storage_env
 from utils.parsing import (
+    parse_optional_unit_float,
+    parse_perturbation_channel_fraction_max,
     require_namespace_bool,
+    require_namespace_value,
     resolve_dataset_window_args,
 )
 
@@ -33,6 +36,26 @@ from utils.parsing import (
 def _normalize_orchestration_booleans(args: Any) -> None:
     args.full_coverage = require_namespace_bool(args, key="full_coverage")
     args.rerun = require_namespace_bool(args, key="rerun")
+
+
+def _normalize_fixed_channel_fraction(args: Any) -> None:
+    fixed_fraction = parse_optional_unit_float(
+        getattr(args, "fixed_channel_fraction", None),
+        key="fixed_channel_fraction",
+    )
+    args.fixed_channel_fraction = fixed_fraction
+    if fixed_fraction is None:
+        return
+    max_fraction = parse_perturbation_channel_fraction_max(
+        require_namespace_value(args, key="perturbation_channel_fraction_max"),
+        key="perturbation_channel_fraction_max",
+    )
+    args.perturbation_channel_fraction_max = max_fraction
+    args.fixed_channel_fraction = parse_optional_unit_float(
+        fixed_fraction,
+        key="fixed_channel_fraction",
+        max_value=max_fraction,
+    )
 
 
 def prepare_testing_entrypoint_args(
@@ -64,6 +87,7 @@ def prepare_testing_entrypoint_args(
         extra_args=explicit_cli_args,
     )
     _normalize_orchestration_booleans(args)
+    _normalize_fixed_channel_fraction(args)
     configured_methods = tuple(str(spec.pipeline_method).strip() for spec in recipe_specs)
     requested_methods = resolve_requested_methods(
         args,

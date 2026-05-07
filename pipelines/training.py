@@ -382,6 +382,38 @@ def _assert_no_reserved_tag_overlap(payload: dict | None, *, context: str) -> No
         )
 
 
+def _validate_training_pipeline_identity(
+    *,
+    pipeline_id: str,
+    pipeline_method: str,
+    pipeline_kind: str,
+    robustness_method: str | None,
+    context: str,
+) -> None:
+    if (pipeline_id == "baseline") != (pipeline_method == "baseline"):
+        raise ValueError(
+            "Baseline tagging mismatch: pipeline_id and pipeline_method must both be "
+            f"'baseline' (or both be non-baseline) for {context}."
+        )
+    if pipeline_method == "baseline":
+        if pipeline_kind != "train":
+            raise ValueError(
+                f"Baseline {context} must use pipeline_kind='train', got "
+                f"{pipeline_kind!r}."
+            )
+        if robustness_method != "baseline":
+            raise ValueError(
+                f"Baseline {context} must set robustness_method='baseline', got "
+                f"{robustness_method!r}."
+            )
+        return
+    if robustness_method is None or str(robustness_method).strip() != pipeline_method:
+        raise ValueError(
+            f"Non-baseline {context} must set robustness_method equal to "
+            f"pipeline_method={pipeline_method!r}, got {robustness_method!r}."
+        )
+
+
 def _hparams_enable_lr_scheduler(hparams: dict[str, Any]) -> bool:
     if "lr_scheduler" not in hparams:
         return False
@@ -802,7 +834,9 @@ def _fit_and_finalize(
             try:
                 client.log_param(final_run_id, key, value)
             except Exception as exc:
-                print(f"Failed to log param '{key}' for run {final_run_id}: {exc}")
+                raise RuntimeError(
+                    f"Failed to log required param '{key}' for run {final_run_id}."
+                ) from exc
     _log_hparams_artifact(client, run_id=final_run_id, hparams=hparams_to_log)
 
     client.set_tag(final_run_id, "stage", stage)
@@ -839,6 +873,13 @@ def train_single_run(
         name="datamodule_kwargs",
     )
     model_kwargs = _require_optional_mapping(model_kwargs, name="model_kwargs")
+    _validate_training_pipeline_identity(
+        pipeline_id=pipeline_id,
+        pipeline_method=pipeline_method,
+        pipeline_kind=pipeline_kind,
+        robustness_method=robustness_method,
+        context="training runs",
+    )
 
     effective_hparams = dict(hparams)
     if model_kwargs:
@@ -849,12 +890,6 @@ def train_single_run(
         model_architecture=model_architecture,
     )
     identity_hparams = optimizer_identity_hparams(effective_hparams)
-
-    if (pipeline_id == "baseline") != (pipeline_method == "baseline"):
-        raise ValueError(
-            "Baseline tagging mismatch: pipeline_id and pipeline_method must both be "
-            "'baseline' (or both be non-baseline) for training runs."
-        )
 
     if model_name_override is None:
         model_name = build_model_name(model_architecture, identity_hparams)
@@ -989,7 +1024,7 @@ def finetune_single_run(
     extra_tags=None,
     pipeline_id="baseline",
     pipeline_method="baseline",
-    pipeline_kind="finetune",
+    pipeline_kind="train",
     loader_kind=None,
     datamodule_kwargs=None,
     model_kwargs=None,
@@ -1002,6 +1037,13 @@ def finetune_single_run(
         name="datamodule_kwargs",
     )
     model_kwargs = _require_optional_mapping(model_kwargs, name="model_kwargs")
+    _validate_training_pipeline_identity(
+        pipeline_id=pipeline_id,
+        pipeline_method=pipeline_method,
+        pipeline_kind=pipeline_kind,
+        robustness_method=robustness_method,
+        context="finetune runs",
+    )
     if finetune_epochs is None:
         raise ValueError("finetune_epochs must be provided for finetune_single_run.")
     if finetune_lr_factor is None:
@@ -1016,12 +1058,6 @@ def finetune_single_run(
         model_architecture=model_architecture,
     )
     identity_hparams = optimizer_identity_hparams(effective_hparams)
-
-    if (pipeline_id == "baseline") != (pipeline_method == "baseline"):
-        raise ValueError(
-            "Baseline tagging mismatch: pipeline_id and pipeline_method must both be "
-            "'baseline' (or both be non-baseline) for training runs."
-        )
 
     if model_name_override is None:
         model_name = build_model_name(model_architecture, identity_hparams)

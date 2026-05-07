@@ -523,8 +523,7 @@ line_colors <- c(
   "Affected channels" = "#4A4A4A",
   "Clean interval reference" = "#a1a1a1",
   "Faulted sensor interval" = mcb[1],
-  "Other channels" = "#bebebe", 
-  #"Other channels" = "#C6C6C6",
+  "Other channels" = "#bebebe",
   "Clean-input forecast" = mcb[4],
   "Perturbed-input forecast" = mcb[2]
 )
@@ -570,7 +569,7 @@ p <- ggplot(
   aes(timestep, value, color = legend_key, linetype = legend_key, linewidth = legend_key, alpha = legend_key, group = line_id)
 ) +
   geom_line(data = context_plot_data, na.rm = TRUE, lineend = "round") +
-  geom_line(na.rm = TRUE) +#, lineend = "round") +
+  geom_line(na.rm = TRUE) +
   geom_vline(data = split_data, aes(xintercept = split_x), color = "#8A8A8A", linewidth = 0.55) +
   facet_wrap(~ panel, ncol = 1, labeller = as_labeller(panel_labels), scales = "free_y") +
   geom_text(data = phase_label_data, aes(timestep, value, label = label), inherit.aes = FALSE, size = 3.1, fontface = "bold", color = "#222222") +
@@ -579,18 +578,13 @@ p <- ggplot(
     aes(timestep, value, label = label),
     inherit.aes = FALSE,
     color = mcb[1],
-    #fill = "#FFFFFFD9",
-    #label.size = 0,
     size = 2.5,
     fontface = "bold",
-   # label.padding = unit(0.08, "lines"),
     box.padding = 0.34,
     point.padding = 0.55,
     nudge_x = input_label_data$x_offset,
     nudge_y = input_label_data$y_offset,
     min.segment.length = 0,
-    # segment.color = mcb[1],
-    # segment.size = 0.25,
     segment.color = NA,
     force = 4,
     seed = 42,
@@ -601,18 +595,13 @@ p <- ggplot(
     aes(timestep, value, label = label),
     inherit.aes = FALSE,
     color = mcb[2],
-   # fill = "#FFFFFFD9",
-   # label.size = 0,
     size = 2.3,
     fontface = "bold",
-   # label.padding = unit(0.08, "lines"),
     box.padding = 0.34,
     point.padding = 0.55,
     nudge_x = forecast_label_data$x_offset,
     nudge_y = forecast_label_data$y_offset,
     min.segment.length = 0,
-    # segment.color = mcb[2],
-    # segment.size = 0.25,
     segment.color = NA,
     force = 4,
     seed = 42,

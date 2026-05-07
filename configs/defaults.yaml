@@ -75,6 +75,7 @@ MAX_HP_TRIALS_PER_MODEL: 40  # limit unique tuning trials per model architecture
 N_TEST_SAMPLES: 10000
 EVAL_DATA_SEED: null
 PERTURBATION_CHANNEL_FRACTION_MAX: 0.5
+FIXED_CHANNEL_FRACTION: null
 PERTURBATION_SCENARIOS:
   # Canonical benchmark order, exact D_w ties break in this sequence.
   # Value faults

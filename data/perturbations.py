@@ -6,7 +6,9 @@ Each operator is callable:
         x, y,                               # tensors
         severity,                           # float in [0, 1]
         rng,                                # torch.Generator
-        cont_channels, disc_channels        # indices of continuous and discrete channels
+        cont_channels, disc_channels,       # indices of continuous and discrete channels
+        channel_count_mode="severity",      # explicit channel-count semantics
+        channel_count_value=severity
     )
 """
 
@@ -18,8 +20,10 @@ import torch
 from typing import Any, List, Sequence
 
 from utils.parsing import (
+    parse_optional_unit_float,
     parse_perturbation_channel_fraction_max,
     parse_perturbation_scenarios,
+    parse_required_unit_interval_float,
 )
 
 
@@ -28,10 +32,7 @@ def _parse_channel_fraction_max(value: float) -> float:
 
 
 def _parse_severity(value: float) -> float:
-    severity = float(value)
-    if severity < 0.0 or severity > 1.0:
-        raise ValueError(f"severity must satisfy 0 <= severity <= 1; got {severity}.")
-    return severity
+    return parse_required_unit_interval_float(value, key="severity")
 
 
 VALID_PERTURBATION_CHANNEL_SCOPES = frozenset({"continuous", "discrete", "all"})
@@ -53,26 +54,124 @@ def require_perturbation_channel_scope(
     return scope
 
 
-def _severity_coupled_channel_count(
-    *,
+def channel_count_for_severity(
     pool_size: int,
     max_fraction: float,
-    severity: float,
+    channel_count_severity: float,
+) -> int:
+    """Map canonical channel-count severity to the selected-channel count."""
+    parsed_fraction = _parse_channel_fraction_max(max_fraction)
+    parsed_severity = parse_required_unit_interval_float(
+        channel_count_severity,
+        key="channel_count_value",
+    )
+    return _channel_count_for_parsed_values(
+        pool_size=pool_size,
+        parsed_fraction=parsed_fraction,
+        parsed_severity=parsed_severity,
+    )
+
+
+def _channel_count_for_parsed_values(
+    *,
+    pool_size: int,
+    parsed_fraction: float,
+    parsed_severity: float,
 ) -> int:
     if pool_size < 0:
         raise ValueError(f"pool_size must be >= 0; got {pool_size}.")
-    if pool_size == 0:
+    if pool_size == 0 or parsed_severity == 0.0:
         return 0
-    if severity == 0.0:
-        return 0
-    k_max = int(math.ceil(max_fraction * pool_size))
+    k_max = int(math.ceil(parsed_fraction * pool_size))
     if k_max < 1 or k_max > pool_size:
         raise ValueError(
-            f"Invalid k_max={k_max} for pool_size={pool_size} and max_fraction={max_fraction}."
+            f"Invalid k_max={k_max} for pool_size={pool_size} and max_fraction={parsed_fraction}."
         )
-    if severity == 1.0:
+    if parsed_severity == 1.0:
         return k_max
-    return 1 + int(math.floor(severity * (k_max - 1)))
+    return 1 + int(math.floor(parsed_severity * (k_max - 1)))
+
+
+def fixed_channel_count_for_fraction(
+    pool_size: int,
+    max_fraction: float,
+    fixed_fraction: float,
+) -> int:
+    """Map a fixed selected-channel fraction to a selected-channel count."""
+    if pool_size <= 0:
+        raise ValueError(f"pool_size must be > 0 for fixed channel fraction; got {pool_size}.")
+    parsed_fraction = _parse_channel_fraction_max(max_fraction)
+    parsed_fixed = parse_optional_unit_float(
+        fixed_fraction,
+        key="fixed_fraction",
+        max_value=parsed_fraction,
+    )
+    if parsed_fixed is None:
+        raise ValueError("fixed_fraction is required for fixed channel fraction.")
+    parsed_fixed_fraction = parsed_fixed
+    k_max = int(math.ceil(parsed_fraction * pool_size))
+    k_fixed = int(math.ceil(parsed_fixed_fraction * pool_size))
+    if k_max < 1 or k_max > pool_size:
+        raise ValueError(
+            f"Invalid k_max={k_max} for pool_size={pool_size} and max_fraction={parsed_fraction}."
+        )
+    if k_fixed < 1 or k_fixed > k_max:
+        raise ValueError(
+            f"Invalid k_fixed={k_fixed} for pool_size={pool_size}, "
+            f"fixed_fraction={parsed_fixed_fraction}, and max_fraction={parsed_fraction}."
+        )
+    return k_fixed
+
+
+def _parse_channel_count_mode(value: Any) -> str:
+    mode = str(value).strip()
+    if mode not in {"severity", "fixed_fraction"}:
+        raise ValueError(
+            "channel_count_mode must be exactly 'severity' or 'fixed_fraction'; "
+            f"got {value!r}."
+        )
+    return mode
+
+
+def _validate_all_scope_channel_count_args(
+    severity: float,
+    *,
+    channel_count_mode: Any = "severity",
+    channel_count_value: Any = None,
+) -> float:
+    parsed_severity = _parse_severity(severity)
+    mode = _parse_channel_count_mode(channel_count_mode)
+    if mode == "severity":
+        if channel_count_value is not None:
+            _parse_matching_severity_channel_count_value(
+                parsed_severity,
+                channel_count_value,
+            )
+    else:
+        parsed_fixed = parse_optional_unit_float(
+            channel_count_value,
+            key="channel_count_value",
+            max_value=1.0,
+        )
+        if parsed_fixed is None:
+            raise ValueError("channel_count_value is required for fixed_fraction mode.")
+    return parsed_severity
+
+
+def _parse_matching_severity_channel_count_value(
+    parsed_severity: float,
+    channel_count_value: Any,
+) -> float:
+    parsed_count_value = parse_required_unit_interval_float(
+        channel_count_value,
+        key="channel_count_value",
+    )
+    if parsed_count_value != parsed_severity:
+        raise ValueError(
+            "channel_count_value must equal severity when channel_count_mode='severity'; "
+            f"got severity={parsed_severity} and channel_count_value={parsed_count_value}."
+        )
+    return parsed_count_value
 
 
 def select_channels(
@@ -81,12 +180,12 @@ def select_channels(
     severity: float,
     rng: torch.Generator,
     *,
+    channel_count_mode: str = "severity",
+    channel_count_value: float | None = None,
     max_fraction_validated: bool = False,
     severity_validated: bool = False,
 ) -> List[int]:
-    """Select a severity-coupled subset from a given channel pool."""
-    if not channel_pool:
-        return []
+    """Select an explicit-mode subset from a given channel pool."""
     if max_fraction_validated:
         try:
             parsed_fraction = float(max_fraction)
@@ -117,15 +216,55 @@ def select_channels(
             )
     else:
         parsed_severity = _parse_severity(severity)
-    k = _severity_coupled_channel_count(
-        pool_size=len(channel_pool),
-        max_fraction=parsed_fraction,
-        severity=parsed_severity,
-    )
+    mode = _parse_channel_count_mode(channel_count_mode)
+    if mode == "severity":
+        if channel_count_value is None:
+            parsed_count_value = parsed_severity
+        else:
+            parsed_count_value = _parse_matching_severity_channel_count_value(
+                parsed_severity,
+                channel_count_value,
+            )
+        k = _channel_count_for_parsed_values(
+            pool_size=len(channel_pool),
+            parsed_fraction=parsed_fraction,
+            parsed_severity=parsed_count_value,
+        )
+    else:
+        if channel_count_value is None:
+            raise ValueError("channel_count_value is required for fixed_fraction mode.")
+        k = fixed_channel_count_for_fraction(
+            len(channel_pool),
+            parsed_fraction,
+            channel_count_value,
+        )
+        if parsed_severity == 0.0:
+            k = 0
     if k == 0:
         return []
     perm_indices = torch.randperm(len(channel_pool), generator=rng)[:k]
     return [channel_pool[i] for i in perm_indices]
+
+
+def _select_channels_for_call(
+    channel_pool: List[int],
+    max_fraction: float,
+    severity: float,
+    rng: torch.Generator,
+    *,
+    channel_count_mode: str = "severity",
+    channel_count_value: float | None = None,
+) -> tuple[float, List[int]]:
+    parsed_severity = _parse_severity(severity)
+    channels = select_channels(
+        channel_pool,
+        max_fraction,
+        parsed_severity,
+        rng,
+        channel_count_mode=channel_count_mode,
+        channel_count_value=channel_count_value,
+    )
+    return parsed_severity, channels
 
 
 def randint_py(low: int, high: int, rng: torch.Generator) -> int:
@@ -193,18 +332,20 @@ class Drift:
         self.min_off = min_offset
         self.max_off = max_offset
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        offset = lin_interp(severity, self.min_off, self.max_off)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        offset = lin_interp(parsed_severity, self.min_off, self.max_off)
         x = x.clone()
         x[:, channels] += offset
         return x, y, channels
@@ -226,18 +367,20 @@ class LinearDrift:
         self.min_drift = min_drift
         self.max_drift = max_drift
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        max_drift = lin_interp(severity, self.min_drift, self.max_drift)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        max_drift = lin_interp(parsed_severity, self.min_drift, self.max_drift)
         x = x.clone()
         seq_len = x.size(0)
         time_steps = torch.arange(seq_len, device=x.device, dtype=x.dtype)
@@ -268,19 +411,21 @@ class NonlinearDrift:
         self.min_quadratic = min_quadratic
         self.max_quadratic = max_quadratic
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        linear_mag = lin_interp(severity, self.min_linear, self.max_linear)
-        quad_mag = lin_interp(severity, self.min_quadratic, self.max_quadratic)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        linear_mag = lin_interp(parsed_severity, self.min_linear, self.max_linear)
+        quad_mag = lin_interp(parsed_severity, self.min_quadratic, self.max_quadratic)
         x = x.clone()
         seq_len = x.size(0)
         time_steps = torch.arange(seq_len, device=x.device, dtype=x.dtype)
@@ -303,18 +448,20 @@ class Attenuation:
         self.min_fac = min_factor
         self.max_fac = max_factor
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        factor = lin_interp(severity, self.min_fac, self.max_fac)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        factor = lin_interp(parsed_severity, self.min_fac, self.max_fac)
         x = x.clone()
         x[:, channels] *= factor
         return x, y, channels
@@ -331,18 +478,20 @@ class Scaling:
         self.min_fac = min_factor
         self.max_fac = max_factor
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        factor = lin_interp(severity, self.min_fac, self.max_fac)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        factor = lin_interp(parsed_severity, self.min_fac, self.max_fac)
         x = x.clone()
         x[:, channels] *= factor
         return x, y, channels
@@ -359,18 +508,20 @@ class TimeVaryingScaling:
         self.min_fac = min_factor
         self.max_fac = max_factor
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        max_factor = lin_interp(severity, self.min_fac, self.max_fac)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        max_factor = lin_interp(parsed_severity, self.min_fac, self.max_fac)
         x = x.clone()
         seq_len = x.size(0)
         time_steps = torch.arange(seq_len, device=x.device, dtype=x.dtype)
@@ -390,18 +541,20 @@ class Noise:
         self.min_sd = min_sd
         self.max_sd = max_sd
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        sd = lin_interp(severity, self.min_sd, self.max_sd)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        sd = lin_interp(parsed_severity, self.min_sd, self.max_sd)
         noise = torch.zeros_like(x)
         noise[:, channels] = torch.randn((x.size(0), len(channels)), generator=rng, device=x.device) * sd
         return x + noise, y, channels
@@ -428,19 +581,21 @@ class Outliers:
         self.min_range = min_range
         self.max_range = max_range
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        outlier_prob = lin_interp(severity, self.min_prob, self.max_prob)
-        outlier_range = lin_interp(severity, self.min_range, self.max_range)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        outlier_prob = lin_interp(parsed_severity, self.min_prob, self.max_prob)
+        outlier_range = lin_interp(parsed_severity, self.min_range, self.max_range)
         x = x.clone()
         seq_len = x.size(0)
         mask = torch.rand((seq_len, len(channels)), generator=rng, device=x.device) < outlier_prob
@@ -464,18 +619,20 @@ class Spike:
         self.min = min_hickup
         self.max = max_hickup
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        hickup = lin_interp(severity, self.min, self.max)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        hickup = lin_interp(parsed_severity, self.min, self.max)
         x = x.clone()
         for ch in channels:
             pos = randint_py(1, x.size(0), rng)
@@ -492,21 +649,22 @@ class StuckSensor:
         self.ch_frac = _parse_channel_fraction_max(channel_frac)
         self.max_frac = max_duration_frac
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        max_duration = self.max_frac * (x.size(0) - 1)
-        duration_float = lin_interp(severity, 0.0, max_duration)
-        duration = int(np.ceil(duration_float))
-
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        max_duration = self.max_frac * (x.size(0) - 1)
+        duration_float = lin_interp(parsed_severity, 0.0, max_duration)
+        duration = int(np.ceil(duration_float))
         x = x.clone()
         for ch in channels:
             start = randint_py(1, x.size(0) - duration + 1, rng)
@@ -530,21 +688,22 @@ class PacketLoss:
         self.max_start_prob = max_start_prob
         self.max_continue_prob = max_continue_prob
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0 or x.size(0) <= 1:
-            return x, y, []
-        start_prob = lin_interp(severity, 0.0, self.max_start_prob)
-        continue_prob = lin_interp(severity, 0.0, self.max_continue_prob)
-        selected_channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, selected_channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
-        if not selected_channels:
+        if not selected_channels or x.size(0) <= 1:
             return x, y, []
+        start_prob = lin_interp(parsed_severity, 0.0, self.max_start_prob)
+        continue_prob = lin_interp(parsed_severity, 0.0, self.max_continue_prob)
 
         x_pert = x.clone()
         for ch in selected_channels:
@@ -580,20 +739,22 @@ class TimeStretch:
         self.min_rate = min_rate
         self.max_rate = max_rate
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        rate = lin_interp(severity, self.min_rate, self.max_rate)
-        # Higher rate -> more samples -> signal stretches -> we move slower through original
-        warp_factor = 1.0 / rate
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        rate = lin_interp(parsed_severity, self.min_rate, self.max_rate)
+        # Higher rate -> more samples -> signal stretches -> we move slower through original
+        warp_factor = 1.0 / rate
 
         x_pert = x.clone()
         d_in = x.size(0)
@@ -629,20 +790,22 @@ class TimeCompress:
         self.min_rate = min_rate
         self.max_rate = max_rate
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        rate = lin_interp(severity, self.min_rate, self.max_rate)
-        # Lower rate -> fewer samples -> signal compresses -> we move faster through original
-        warp_factor = 1.0 / rate
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        rate = lin_interp(parsed_severity, self.min_rate, self.max_rate)
+        # Lower rate -> fewer samples -> signal compresses -> we move faster through original
+        warp_factor = 1.0 / rate
 
         x_pert = x.clone()
         d_in = x.size(0)
@@ -674,18 +837,20 @@ class TrimmingConstant:
         self.min_std_mult = min_std_mult
         self.max_std_mult = max_std_mult
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        std_mult = lin_interp(severity, self.min_std_mult, self.max_std_mult)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        std_mult = lin_interp(parsed_severity, self.min_std_mult, self.max_std_mult)
         x = x.clone()
         lower = -std_mult
         upper = std_mult
@@ -718,19 +883,21 @@ class TrimmingVarying:
         self.min_damping = min_damping
         self.max_damping = max_damping
 
-    def __call__(self, x, y, severity, rng, cont_channels, _disc_channels):
-        if severity == 0: return x, y, []
-        std_mult = lin_interp(severity, self.min_std_mult, self.max_std_mult)
-        damping = lin_interp(severity, self.min_damping, self.max_damping)
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             cont_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        std_mult = lin_interp(parsed_severity, self.min_std_mult, self.max_std_mult)
+        damping = lin_interp(parsed_severity, self.min_damping, self.max_damping)
         x = x.clone()
         lower = -std_mult
         upper = std_mult
@@ -762,21 +929,23 @@ class WrongState:
         self.max_duration_frac = max_duration_frac
         self.delta = delta
 
-    def __call__(self, x, y, severity, rng, _cont_channels, disc_channels):
-        if severity == 0 or not disc_channels: return x, y, []
-        max_duration = self.max_duration_frac * (x.size(0) - 1)
-        duration_float = lin_interp(severity, 0.0, max_duration)
-        duration = int(np.ceil(duration_float))
-
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, _cont_channels, disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             disc_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        max_duration = self.max_duration_frac * (x.size(0) - 1)
+        duration_float = lin_interp(parsed_severity, 0.0, max_duration)
+        duration = int(np.ceil(duration_float))
+
         x = x.clone()
         for ch in channels:
             start = randint_py(1, x.size(0) - duration + 1, rng)
@@ -794,21 +963,23 @@ class Chattering:
         self.ch_frac = _parse_channel_fraction_max(channel_frac)
         self.max_frac = max_duration_frac
 
-    def __call__(self, x, y, severity, rng, _cont_channels, disc_channels):
-        if severity == 0 or not disc_channels: return x, y, []
-        max_duration = self.max_frac * (x.size(0) - 1)
-        duration_float = lin_interp(severity, 0.0, max_duration)
-        duration = int(np.ceil(duration_float))
-
-        channels = select_channels(
+    def __call__(
+        self, x, y, severity, rng, _cont_channels, disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity, channels = _select_channels_for_call(
             disc_channels,
             self.ch_frac,
             severity,
             rng,
-            max_fraction_validated=True,
-            severity_validated=True,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
         )
         if not channels: return x, y, []
+        max_duration = self.max_frac * (x.size(0) - 1)
+        duration_float = lin_interp(parsed_severity, 0.0, max_duration)
+        duration = int(np.ceil(duration_float))
+
         x = x.clone()
         for ch in channels:
             start = randint_py(1, x.size(0) - duration + 1, rng)
@@ -837,12 +1008,20 @@ class MissingData:
     def __init__(self, *, max_gap_frac: float = 0.5):
         self.max_frac = max_gap_frac
 
-    def __call__(self, x, y, severity, rng, cont_channels, disc_channels):
-        if severity == 0: return x, y, []
+    def __call__(
+        self, x, y, severity, rng, cont_channels, disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        parsed_severity = _validate_all_scope_channel_count_args(
+            severity,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
+        )
+        if parsed_severity == 0: return x, y, []
 
         input_len = x.size(0)
         max_gap = self.max_frac * (input_len - 1)
-        gap_len_float = lin_interp(severity, 0.0, max_gap)
+        gap_len_float = lin_interp(parsed_severity, 0.0, max_gap)
         gap_len = int(np.ceil(gap_len_float))
         gap_start = randint_py(1, input_len - gap_len + 1, rng)
 

@@ -559,6 +559,51 @@ def _require_exact_key_coverage(
         raise ValueError(f"{context} contains unexpected key(s): {unexpected[:5]}.")
 
 
+def _require_winner_pool(df: pd.DataFrame, *, context: str) -> None:
+    _require_columns(df, {"selection_pool"}, context=context)
+    selection_pool = _nonempty_string_series(
+        df,
+        "selection_pool",
+        context=context,
+    )
+    bad_rows = selection_pool != "winner_pool"
+    if bad_rows.any():
+        sample_cols = [
+            column
+            for column in ("dataset", "run_id", "pipeline_id", "selection_pool")
+            if column in df.columns
+        ]
+        examples = df.loc[bad_rows, sample_cols].head(5).to_dict(orient="records")
+        raise ValueError(
+            f"{context} contains rows outside winner_pool: {examples}."
+        )
+
+
+def _require_one_signature_per_key(
+    df: pd.DataFrame,
+    key_columns: tuple[str, ...],
+    *,
+    context: str,
+) -> None:
+    _require_columns(df, set(key_columns) | {"data_config_signature"}, context=context)
+    signature_counts = (
+        df.loc[:, list(key_columns) + ["data_config_signature"]]
+        .drop_duplicates()
+        .groupby(list(key_columns), dropna=False)["data_config_signature"]
+        .nunique()
+    )
+    mixed = signature_counts[signature_counts > 1]
+    if not mixed.empty:
+        examples = [
+            dict(zip(key_columns, key if isinstance(key, tuple) else (key,)))
+            for key in mixed.index[:5]
+        ]
+        raise ValueError(
+            f"{context} contains multiple data_config_signature values for "
+            f"{key_columns}: {examples}."
+        )
+
+
 def _scenario_group_lookup(config: CoreFigureConfig) -> dict[str, str]:
     lookup: dict[str, str] = {}
     for group_name, scenarios in config.scenario_groups.items():
@@ -634,6 +679,7 @@ def build_main_table_backbone(
     ].copy()
     if baseline.empty:
         raise ValueError(f"{context} found no baseline rows.")
+    _require_winner_pool(baseline, context=context)
 
     baseline = _enrich_dataset_backbone_columns(
         baseline,
@@ -644,6 +690,21 @@ def build_main_table_backbone(
     _assert_no_duplicates(
         baseline,
         ["dataset", "data_config_signature", "backbone"],
+        context=context,
+    )
+    _assert_no_duplicates(
+        baseline,
+        ["dataset", "backbone"],
+        context=context,
+    )
+    _require_one_signature_per_key(
+        baseline,
+        ("dataset", "backbone"),
+        context=context,
+    )
+    _require_one_signature_per_key(
+        baseline,
+        ("dataset",),
         context=context,
     )
     expected = {
@@ -759,6 +820,7 @@ def build_backbone_scenario_heatmap_data(
         [
             "dataset",
             "data_config_signature",
+            "run_id",
             "backbone",
             "MSE_c",
             "D_w",
@@ -768,12 +830,14 @@ def build_backbone_scenario_heatmap_data(
     ]
     heatmap = baseline_scenarios.merge(
         main_lookup,
-        on=["dataset", "data_config_signature", "backbone"],
+        on=["dataset", "data_config_signature", "run_id", "backbone"],
         how="left",
         validate="many_to_one",
     )
     if heatmap["MSE_c"].isna().any():
-        raise ValueError(f"{context} could not match every scenario row to a baseline.")
+        raise ValueError(
+            f"{context} could not match every scenario row to a selected baseline run."
+        )
     heatmap["is_worst_scenario"] = heatmap["scenario"].eq(
         heatmap["worst_scenario"]
     ).map({True: "true", False: "false"})
@@ -833,6 +897,7 @@ def build_pgd_trajectory_data(
         raise ValueError(
             f"{context} found no rows for method {core_config.trajectory_method!r}."
         )
+    _require_winner_pool(method_rows, context=context)
 
     method_rows = _enrich_dataset_backbone_columns(
         method_rows,
@@ -851,6 +916,21 @@ def build_pgd_trajectory_data(
         ["dataset", "data_config_signature", "backbone"],
         context=context,
     )
+    _assert_no_duplicates(
+        method_rows,
+        ["dataset", "backbone"],
+        context=context,
+    )
+    _require_one_signature_per_key(
+        method_rows,
+        ("dataset", "backbone"),
+        context=context,
+    )
+    _require_one_signature_per_key(
+        method_rows,
+        ("dataset",),
+        context=context,
+    )
     expected = {
         (dataset, backbone)
         for dataset in core_config.dataset_order
@@ -865,13 +945,34 @@ def build_pgd_trajectory_data(
 
     _require_columns(
         analysis_df,
-        {"run_id", "pipeline_id"},
+        {
+            "run_id",
+            "pipeline_id",
+            "pipeline_method",
+            "robustness_method",
+            "data_config_signature",
+            "selection_pool",
+        },
         context=f"{context} baseline lookup",
     )
-    baseline_lookup = analysis_df.loc[:, ["run_id", "pipeline_id"]].rename(
+    baseline_lookup = analysis_df.loc[
+        (analysis_df["pipeline_method"].astype(str) == "baseline")
+        & (analysis_df["robustness_method"].astype(str) == "baseline")
+        & (analysis_df["pipeline_id"].astype(str) == "baseline")
+    ].copy()
+    _require_winner_pool(baseline_lookup, context=f"{context} baseline lookup")
+    _assert_no_duplicates(
+        baseline_lookup,
+        ["run_id"],
+        context=f"{context} baseline lookup",
+    )
+    baseline_lookup = baseline_lookup.loc[
+        :, ["run_id", "pipeline_id", "data_config_signature"]
+    ].rename(
         columns={
             "run_id": "matched_baseline_run_id",
             "pipeline_id": "baseline_pipeline_id",
+            "data_config_signature": "baseline_data_config_signature",
         }
     )
     method_rows = method_rows.merge(
@@ -882,6 +983,26 @@ def build_pgd_trajectory_data(
     )
     if method_rows["baseline_pipeline_id"].isna().any():
         raise ValueError(f"{context} could not match every row to a baseline run.")
+    signature_mismatch = (
+        method_rows["data_config_signature"].astype(str)
+        != method_rows["baseline_data_config_signature"].astype(str)
+    )
+    if signature_mismatch.any():
+        examples = method_rows.loc[
+            signature_mismatch,
+            [
+                "dataset",
+                "backbone",
+                "run_id",
+                "data_config_signature",
+                "matched_baseline_run_id",
+                "baseline_data_config_signature",
+            ],
+        ].head(5).to_dict(orient="records")
+        raise ValueError(
+            f"{context} matched baseline rows have incompatible "
+            f"data_config_signature values: {examples}."
+        )
 
     method_rows["baseline_run_id"] = method_rows["matched_baseline_run_id"]
     method_rows["baseline_MSE_c"] = method_rows["MSE_test_baseline"]
