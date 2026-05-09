@@ -188,8 +188,12 @@ def _build_perturbation_sampler(
         probs,
         severity_laws,
     )
+    for local_idx, perturbation in enumerate(perturbations):
+        perturbation.idx = int(local_idx)
     perturbation_names = [pert.name for pert in perturbations]
-    perturbation_name_by_idx = {pert.idx: pert.name for pert in perturbations}
+    perturbation_name_by_idx = {
+        int(idx): pert.name for idx, pert in enumerate(perturbations)
+    }
     return sampler, perturbation_names, perturbation_name_by_idx
 
 
