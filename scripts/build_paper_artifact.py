@@ -1000,7 +1000,7 @@ def _build_manifest(
     compute_file_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
     primary_context = contexts["primary_clean_2026-04-26_10k"]
-    source_git = _git_metadata(source_root)
+    source_git = _git_metadata(PUBLIC_REPO_ROOT)
 
     source_exports = []
     for spec in SOURCE_SPECS:
@@ -1032,9 +1032,8 @@ def _build_manifest(
         "artifact_version": 1,
         "built_at_utc": build_time_utc,
         "source_repository": {
-            "name": "sensorfault-bench",
+            "name": "SensorFault-Bench",
             "git_commit": source_git["commit"],
-            "worktree_dirty_at_build": source_git["worktree_dirty"],
         },
         "primary_source_id": "primary_clean_2026-04-26_10k",
         "dataset_scope": primary_context["data_files"],

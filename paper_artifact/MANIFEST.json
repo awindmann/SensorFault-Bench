@@ -1210,9 +1210,8 @@
     }
   ],
   "source_repository": {
-    "git_commit": "5c825b3362845d8529c2d3cfca3a212326a57992",
-    "name": "sensorfault-bench",
-    "worktree_dirty_at_build": true
+    "git_commit": "a8dcef3869556cab9125faec3c322b78e78dc284",
+    "name": "SensorFault-Bench"
   },
   "test_metric": "MSE"
 }
