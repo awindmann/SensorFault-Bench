@@ -93,6 +93,17 @@ under `figures/`, the figure index at `tables/figures_manifest.csv`, and the
 analysis invocation under `config/meta_analysis_args.yaml`. The default local
 MLflow tracking store is `runs`.
 
+## Testing
+
+The source repository includes a pytest suite under `tests/`. It validates the
+benchmark code, release surface, paper-artifact manifest, and public-safe
+documentation. Run it with:
+
+```bash
+uv sync
+uv run pytest -q
+```
+
 ### Paper Artifact
 
 The submitted repository includes `paper_artifact/MANIFEST.json` as the frozen

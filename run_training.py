@@ -85,6 +85,14 @@ def main() -> None:
         explicit_architectures=has_explicit_architecture_scope(args),
         context="run_training.py",
     )
+    missing_methods = [
+        method for method in methods if not method_architecture_scope.get(method)
+    ]
+    if missing_methods:
+        raise ValueError(
+            "Resolved method-architecture scope omitted requested method(s): "
+            f"{', '.join(missing_methods)}."
+        )
 
     set_mlflow_storage_env(args)
 

@@ -15,6 +15,16 @@ Place the four benchmark datasets under `DATA_ROOT`, which defaults to
 `data/processed`. See `data/README.md` for acquisition, preprocessing, and
 derived-dataset validation.
 
+## Source Validation
+
+The source repository includes a pytest suite under `tests/`. It validates the
+benchmark code, release surface, paper-artifact manifest, and public-safe
+documentation:
+
+```bash
+uv run pytest -q
+```
+
 ## Full Benchmark Commands
 
 Train all benchmark datasets, architectures, and applicable methods:
