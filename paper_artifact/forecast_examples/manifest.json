@@ -3,8 +3,8 @@
   "curated_figure_trace_csvs_bundled": true,
   "full_trace_csvs_bundled": false,
   "paper_figures": [
-    "NeurIPS-paper/figures/Figure_3_forecast_short_term.pdf",
-    "NeurIPS-paper/figures/Figure_4_forecast_long_term.pdf"
+    "figures/Figure_3_forecast_short_term.pdf",
+    "figures/Figure_4_forecast_long_term.pdf"
   ],
   "regeneration_mode": "from-runs",
   "regeneration_note": "Use these sample identities with render_forecast_plots.py from-runs against trained benchmark models, their MLflow runs, checkpoints, and processed datasets. The R subartifact bundles the curated trace extracts used by the plotted paper figures, while full forecast trace dumps are intentionally omitted.",

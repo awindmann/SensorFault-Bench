@@ -120,8 +120,8 @@
     {
       "path": "forecast_examples/manifest.json",
       "role": "curated qualitative forecast-example sample manifest",
-      "sha256": "22eb0965e64301f6bba4f348a283930d5a072a50ec21f1804c17df70a9ebadd9",
-      "size_bytes": 5416
+      "sha256": "50b0331d44fb72088a196d9856fa50048d33cac5b8bd7343fb7f02686984ba62",
+      "size_bytes": 5388
     },
     {
       "derivation_script": "scripts/generate_paper_figure_csvs.py",

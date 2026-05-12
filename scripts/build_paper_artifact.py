@@ -34,21 +34,23 @@ from scripts.generate_paper_figure_csvs import (
 ARTIFACT_ID = "sensorfault-bench-neurips2026-paper-artifact-v1"
 MAX_FILE_BYTES = 5 * 1024 * 1024
 
-PRIVATE_VALUE_REGEXES = (
-    re.compile(r"/Users/[A-Za-z0-9_.-]+"),
-    re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
-    re.compile(
-        r"(?i)\b(?:git@github\.com:|https?://github\.com/)"
-        r"[A-Za-z0-9_.-]+/robust-AI-verification(?:\.git)?\b",
+PRIVATE_VALUE_PATTERNS = {
+    "local home path": re.compile(r"/Users/[A-Za-z0-9_.-]+"),
+    "email address": re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
+    "GitHub SSH repository locator": re.compile(
+        r"(?i)\bgit@github\.com:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?\b",
     ),
-    re.compile(r"(?i)\b[A-Za-z0-9_.-]+\.svc\.cluster\.local\b"),
-    re.compile(r"(?i)\bsvc\.cluster\.local\b"),
-    re.compile(r"(?i)\bmlflow-server\.[A-Za-z0-9_.-]+"),
-    re.compile(r"(?i)\bhttps?://minio(?:[.:/][^\s`\"')]+)?"),
-    re.compile(r"\bAWS_ACCESS_KEY_ID\s*="),
-    re.compile(r"\bAWS_SECRET_ACCESS_KEY\s*="),
-    re.compile(r"\bMINIO_ROOT_PASSWORD\s*="),
-)
+    "GitHub HTTPS repository locator": re.compile(
+        r"(?i)\bhttps?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?\b",
+    ),
+    "cluster-local service name": re.compile(r"(?i)\b[A-Za-z0-9_.-]+\.svc\.cluster\.local\b"),
+    "cluster-local service suffix": re.compile(r"(?i)\bsvc\.cluster\.local\b"),
+    "MLflow private service host": re.compile(r"(?i)\bmlflow-server\.[A-Za-z0-9_.-]+"),
+    "MinIO private endpoint": re.compile(r"(?i)\bhttps?://minio(?:[.:/][^\s`\"')]+)?"),
+    "AWS access key assignment": re.compile(r"\bAWS_ACCESS_KEY_ID\s*="),
+    "AWS secret key assignment": re.compile(r"\bAWS_SECRET_ACCESS_KEY\s*="),
+    "MinIO root password assignment": re.compile(r"\bMINIO_ROOT_PASSWORD\s*="),
+}
 FORBIDDEN_OUTPUT_FILENAMES = {
     "meta_analysis_args.yaml",
     "scenario_samples.csv",
@@ -594,19 +596,29 @@ def _artifact_relpath(output_root: Path, path: Path) -> str:
     return path.relative_to(output_root).as_posix()
 
 
+def _public_error_path(path: Path) -> str:
+    if path.is_absolute():
+        return path.name
+    return path.as_posix()
+
+
 def _assert_public_file(path: Path) -> None:
     if path.name in FORBIDDEN_OUTPUT_FILENAMES:
-        raise ValueError(f"Forbidden output filename: {path}")
+        raise ValueError(f"Forbidden output filename: {_public_error_path(path)}")
     if path.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError(f"{path} exceeds {MAX_FILE_BYTES} bytes.")
+        raise ValueError(f"{_public_error_path(path)} exceeds {MAX_FILE_BYTES} bytes.")
     if path.suffix.lower() in {".csv", ".json", ".md", ".txt", ".yaml", ".yml"}:
         _assert_public_text(path.read_text(encoding="utf-8"), path)
 
 
 def _assert_public_text(text: str, path: Path) -> None:
-    offenders = [regex.pattern for regex in PRIVATE_VALUE_REGEXES if regex.search(text)]
+    offenders = [
+        label
+        for label, regex in PRIVATE_VALUE_PATTERNS.items()
+        if regex.search(text)
+    ]
     if offenders:
-        raise ValueError(f"{path} contains private values: {offenders}")
+        raise ValueError(f"{_public_error_path(path)} contains private values: {offenders}")
 
 
 def _collect_table_metadata(path: Path) -> dict[str, Any]:
@@ -806,8 +818,8 @@ def _forecast_example_payload() -> dict[str, Any]:
         "regeneration_script": "scripts/render_forecast_plots.py",
         "regeneration_mode": "from-runs",
         "paper_figures": [
-            "NeurIPS-paper/figures/Figure_3_forecast_short_term.pdf",
-            "NeurIPS-paper/figures/Figure_4_forecast_long_term.pdf",
+            "figures/Figure_3_forecast_short_term.pdf",
+            "figures/Figure_4_forecast_long_term.pdf",
         ],
         "curated_figure_trace_csvs_bundled": True,
         "full_trace_csvs_bundled": False,
