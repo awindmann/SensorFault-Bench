@@ -34,11 +34,16 @@ def torch_generator(device: torch.device) -> torch.Generator:
     return gen
 
 
+def _require_seed_key_component(value: Optional[str], *, name: str) -> str:
+    if value is None or not str(value).strip():
+        raise ValueError(f"{name} must be set for seed derivation.")
+    return str(value)
+
+
 def derive_seed(base_seed: int, key: str) -> int:
     if base_seed is None:
         raise ValueError("seed must be set.")
-    if not key:
-        return int(base_seed)
+    key = _require_seed_key_component(key, name="key")
     digest = hashlib.sha256(str(key).encode("utf-8")).hexdigest()
     offset = int(digest[:8], 16)
     return (int(base_seed) + offset) % (2**31 - 1)
@@ -59,21 +64,30 @@ def derive_component_seeds(
 ) -> Dict[str, int]:
     if base_seed is None:
         raise ValueError("base_seed must be set.")
-    if not dataset_key:
-        raise ValueError("dataset_key must be set.")
+    dataset_key = _require_seed_key_component(dataset_key, name="dataset_key")
+    data_config_signature = _require_seed_key_component(
+        data_config_signature,
+        name="data_config_signature",
+    )
+    architecture = _require_seed_key_component(architecture, name="architecture")
+    pipeline_id = _require_seed_key_component(pipeline_id, name="pipeline_id")
+    pipeline_method = _require_seed_key_component(pipeline_method, name="pipeline_method")
+    pipeline_kind = _require_seed_key_component(pipeline_kind, name="pipeline_kind")
     data_key = f"data:{dataset_key}:{data_config_signature}"
     model_key = (
         "model:"
         f"{dataset_key}:"
-        f"{architecture or ''}:"
-        f"{pipeline_id or ''}:"
-        f"{pipeline_method or ''}:"
-        f"{pipeline_kind or ''}"
+        f"{architecture}:"
+        f"{pipeline_id}:"
+        f"{pipeline_method}:"
+        f"{pipeline_kind}"
     )
-    if model_stage:
+    if model_stage is not None:
+        model_stage = _require_seed_key_component(model_stage, name="model_stage")
         model_key = f"{model_key}:{model_stage}"
     eval_key = f"eval:{dataset_key}:{data_config_signature}"
-    if eval_variant:
+    if eval_variant is not None:
+        eval_variant = _require_seed_key_component(eval_variant, name="eval_variant")
         eval_key = f"{eval_key}:{eval_variant}"
 
     data_seed_base = base_seed if data_base_seed is None else data_base_seed

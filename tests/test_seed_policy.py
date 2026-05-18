@@ -9,7 +9,7 @@ import models.components.attention as attention_impl
 from models.components.attention import ProbAttention
 from models.base_module import BaseLitModule
 from pipelines.signatures import compute_data_config_signature
-from utils.rng import derive_component_seeds, derive_tuning_seed
+from utils.rng import derive_component_seeds, derive_seed, derive_tuning_seed
 
 
 def _make_args(*, seed=42, data_split_seed=None, n_train_samples=10):
@@ -131,6 +131,37 @@ def test_data_split_seed_overrides_master_seed():
         pipeline_kind="train",
     )
     assert seeds_master["data_seed"] != seeds_split["data_seed"]
+
+
+def test_seed_derivation_rejects_empty_key():
+    with pytest.raises(ValueError, match="key must be set"):
+        derive_seed(42, "")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("data_config_signature", ""),
+        ("architecture", None),
+        ("pipeline_id", ""),
+        ("pipeline_method", "  "),
+        ("pipeline_kind", None),
+    ],
+)
+def test_component_seed_derivation_requires_identity_components(field, value):
+    kwargs = {
+        "base_seed": 123,
+        "dataset_key": "demo",
+        "data_config_signature": "sig",
+        "architecture": "DLinear",
+        "pipeline_id": "baseline",
+        "pipeline_method": "baseline",
+        "pipeline_kind": "train",
+    }
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=f"{field} must be set"):
+        derive_component_seeds(**kwargs)
 
 
 def test_data_config_signature_uses_data_split_seed_when_sampling():
