@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any, Optional
 
-from utils.parsing import parse_dataset_split_mode, require_namespace_value
+from utils.parsing import parse_dataset_split_mode, parse_value, require_namespace_value
 
 
 _PROVENANCE_ONLY_HPARAMS_BY_ARCHITECTURE = {
@@ -87,9 +87,17 @@ def compute_data_config_signature(
         value is not None for value in (n_train_samples, n_val_samples, n_test_samples)
     )
     if sampling_enabled:
-        sampling_seed = require_namespace_value(args, key="data_split_seed")
+        sampling_seed = parse_value(
+            require_namespace_value(args, key="data_split_seed"),
+            int,
+            key="data_split_seed",
+        )
         if sampling_seed is None:
-            sampling_seed = require_namespace_value(args, key="seed")
+            sampling_seed = parse_value(
+                require_namespace_value(args, key="seed"),
+                int,
+                key="seed",
+            )
         if sampling_seed is None:
             raise ValueError("Sampling is enabled but args.seed is missing.")
         normalized["sampling_seed"] = sampling_seed

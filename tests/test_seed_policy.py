@@ -173,20 +173,33 @@ def test_data_config_signature_uses_data_split_seed_when_sampling():
     assert sig_a != sig_b
 
 
-def test_data_config_signature_preserves_cli_seed_token_shape_when_sampling():
+def test_data_config_signature_normalizes_cli_seed_token_when_sampling():
     dataset_spec = _make_dataset_spec()
     args_int = _make_args(seed=42, data_split_seed=123, n_train_samples=10)
     args_str = _make_args(seed=42, data_split_seed="123", n_train_samples=10)
     args_null = _make_args(seed=42, data_split_seed="null", n_train_samples=10)
+    args_default = _make_args(seed=42, data_split_seed=None, n_train_samples=10)
 
-    assert compute_data_config_signature(dataset_spec=dataset_spec, args=args_int) != (
+    assert compute_data_config_signature(dataset_spec=dataset_spec, args=args_int) == (
         compute_data_config_signature(dataset_spec=dataset_spec, args=args_str)
     )
-    assert compute_data_config_signature(dataset_spec=dataset_spec, args=args_str) == (
-        _reference_temporal_signature(args_str)
-    )
     assert compute_data_config_signature(dataset_spec=dataset_spec, args=args_null) == (
-        _reference_temporal_signature(args_null)
+        compute_data_config_signature(dataset_spec=dataset_spec, args=args_default)
+    )
+
+
+def test_data_config_signature_ignores_eval_data_seed_override():
+    dataset_spec = _make_dataset_spec()
+    args_default_eval = _make_args(seed=42, data_split_seed=None, n_train_samples=10)
+    args_explicit_eval = _make_args(seed=42, data_split_seed=None, n_train_samples=10)
+    args_explicit_eval.eval_data_seed = "123"
+
+    assert compute_data_config_signature(
+        dataset_spec=dataset_spec,
+        args=args_default_eval,
+    ) == compute_data_config_signature(
+        dataset_spec=dataset_spec,
+        args=args_explicit_eval,
     )
 
 
