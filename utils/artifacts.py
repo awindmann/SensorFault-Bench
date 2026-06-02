@@ -93,6 +93,47 @@ def download_best_checkpoint(client: Any, run_id: str, dst_path: str | None = No
     )
 
 
+def unlink_downloaded_checkpoint(
+    checkpoint_path: str | os.PathLike[str],
+    *,
+    run_id: str,
+    context: str,
+) -> None:
+    """Remove a local checkpoint file after successful deserialization."""
+    local_path = os.fspath(checkpoint_path)
+    if not local_path:
+        raise ValueError("checkpoint cleanup requires a non-empty checkpoint_path.")
+    run_id_text = str(run_id).strip()
+    if not run_id_text:
+        raise ValueError("checkpoint cleanup requires a non-empty run_id.")
+    context_text = str(context).strip()
+    if not context_text:
+        raise ValueError("checkpoint cleanup requires a non-empty context.")
+    try:
+        os.unlink(local_path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise OSError(
+            f"Failed to remove downloaded checkpoint '{local_path}' "
+            f"for run {run_id_text} ({context_text})."
+        ) from exc
+
+
+def require_downloaded_checkpoint_unlinker(
+    client: Any,
+    *,
+    context: str,
+) -> Any:
+    """Return the scoped checkpoint cleanup hook required by testing loaders."""
+    unlinker = getattr(client, "unlink_downloaded_checkpoint", None)
+    if not callable(unlinker):
+        raise ValueError(
+            f"{context} requires a scoped artifact client with checkpoint cleanup."
+        )
+    return unlinker
+
+
 def load_lightning_module_checkpoint(
     model_class: Any,
     checkpoint_path: str,

@@ -4,7 +4,11 @@ import pytest
 from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
 
-from utils.artifacts import download_best_checkpoint
+from utils.artifacts import (
+    download_best_checkpoint,
+    require_downloaded_checkpoint_unlinker,
+    unlink_downloaded_checkpoint,
+)
 
 
 def test_download_best_checkpoint_propagates_list_artifacts_errors():
@@ -126,3 +130,75 @@ def test_download_best_checkpoint_prefers_latest_epoch_directory(tmp_path):
 
     assert resolved == str(epoch_010_ckpt)
     assert calls == ["epoch=010"]
+
+
+def test_unlink_downloaded_checkpoint_removes_local_file(tmp_path):
+    checkpoint_path = tmp_path / "best.ckpt"
+    checkpoint_path.write_text("checkpoint", encoding="utf-8")
+
+    unlink_downloaded_checkpoint(
+        checkpoint_path,
+        run_id="run-1",
+        context="standard loader",
+    )
+
+    assert not checkpoint_path.exists()
+
+
+def test_unlink_downloaded_checkpoint_accepts_missing_file(tmp_path):
+    checkpoint_path = tmp_path / "already-gone.ckpt"
+
+    unlink_downloaded_checkpoint(
+        checkpoint_path,
+        run_id="run-1",
+        context="standard loader",
+    )
+
+
+def test_unlink_downloaded_checkpoint_raises_non_missing_errors(tmp_path):
+    checkpoint_path = tmp_path / "best.ckpt"
+    checkpoint_path.mkdir()
+
+    with pytest.raises(
+        OSError,
+        match="Failed to remove downloaded checkpoint .*best\\.ckpt.*run-1.*standard loader",
+    ):
+        unlink_downloaded_checkpoint(
+            checkpoint_path,
+            run_id="run-1",
+            context="standard loader",
+        )
+
+
+def test_require_downloaded_checkpoint_unlinker_returns_cleanup_hook(tmp_path):
+    checkpoint_path = tmp_path / "best.ckpt"
+    checkpoint_path.write_text("checkpoint", encoding="utf-8")
+
+    class _Client:
+        def unlink_downloaded_checkpoint(self, checkpoint_path, *, run_id, context):
+            assert run_id == "run-1"
+            assert context == "standard loader"
+            unlink_downloaded_checkpoint(
+                checkpoint_path,
+                run_id=run_id,
+                context=context,
+            )
+
+    unlinker = require_downloaded_checkpoint_unlinker(
+        _Client(),
+        context="standard loader",
+    )
+    unlinker(checkpoint_path, run_id="run-1", context="standard loader")
+
+    assert not checkpoint_path.exists()
+
+
+def test_require_downloaded_checkpoint_unlinker_rejects_unscoped_client():
+    with pytest.raises(
+        ValueError,
+        match="standard loader requires a scoped artifact client",
+    ):
+        require_downloaded_checkpoint_unlinker(
+            object(),
+            context="standard loader",
+        )

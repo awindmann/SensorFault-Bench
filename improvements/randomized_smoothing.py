@@ -16,7 +16,10 @@ from .base import (
     load_improvement_spec,
     resolve_wrap_backbone_references,
 )
-from utils.artifacts import load_lightning_module_checkpoint
+from utils.artifacts import (
+    load_lightning_module_checkpoint,
+    require_downloaded_checkpoint_unlinker,
+)
 from utils.parsing import (
     parse_required_choice,
     parse_required_nonnegative_float,
@@ -220,6 +223,10 @@ def build_randomized_smoothing_model(client, run):
             f"'{backbone_method}' but backbone reference {reference.run_id} stores "
             f"pipeline_method='{reference.pipeline_method}'."
         )
+    cleanup_checkpoint = require_downloaded_checkpoint_unlinker(
+        client,
+        context=f"randomized smoothing loader for wrap run {run.info.run_id}",
+    )
     checkpoint_path = download_backbone_reference_checkpoint(client, run, reference)
     if not hasattr(models, reference.model_architecture):
         raise ValueError(
@@ -229,6 +236,11 @@ def build_randomized_smoothing_model(client, run):
 
     base_class = getattr(models, reference.model_architecture)
     backbone = load_lightning_module_checkpoint(base_class, checkpoint_path)
+    cleanup_checkpoint(
+        checkpoint_path,
+        run_id=reference.run_id,
+        context=f"randomized smoothing backbone for wrap run {run.info.run_id}",
+    )
     sample_count = parse_required_positive_int(
         spec.parameters.get("rs_sample_count"),
         key="rs_sample_count",

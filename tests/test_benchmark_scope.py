@@ -16,8 +16,10 @@ from pipelines.recipes import PIPELINE_RECIPE_PATHS_BY_METHOD, load_pipeline_spe
 from pipelines.runner import PipelineRunner
 from pipelines.selection import resolve_requested_architectures, resolve_requested_methods
 from pipelines.specs import PipelineSpec
-from testing.evaluation import load_model_with_loader
-from testing.evaluation import _resolve_model_loading_identity_for_run
+from testing.evaluation import (
+    _resolve_model_loading_identity_for_run,
+    load_model_with_loader,
+)
 
 
 _BENCHMARK_SCOPE = load_benchmark_scope()

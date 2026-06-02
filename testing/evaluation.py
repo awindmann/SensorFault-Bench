@@ -101,7 +101,12 @@ from utils.parsing import (
     resolve_mlflow_local_save_dir,
     resolve_effective_eval_data_seed,
 )
-from utils.artifacts import download_best_checkpoint, load_lightning_module_checkpoint
+from utils.artifacts import (
+    download_best_checkpoint,
+    load_lightning_module_checkpoint,
+    require_downloaded_checkpoint_unlinker,
+    unlink_downloaded_checkpoint,
+)
 from utils.rng import derive_seed, set_seed
 
 from testing.shared import (
@@ -182,6 +187,26 @@ class _ScopedArtifactClient:
     def download_artifacts(self, run_id: str, path: str, dst_path: str | None = None) -> str:
         target_dst = self._dst_root if dst_path is None else dst_path
         return self._client.download_artifacts(run_id, path, dst_path=target_dst)
+
+    def unlink_downloaded_checkpoint(
+        self,
+        checkpoint_path: str | os.PathLike[str],
+        *,
+        run_id: str,
+        context: str,
+    ) -> None:
+        local_path = os.path.abspath(os.fspath(checkpoint_path))
+        dst_root = os.path.abspath(self._dst_root)
+        if os.path.commonpath([local_path, dst_root]) != dst_root:
+            raise ValueError(
+                f"Refusing to remove checkpoint outside scoped artifact root "
+                f"for run {run_id}: checkpoint='{local_path}', root='{dst_root}'."
+            )
+        unlink_downloaded_checkpoint(
+            local_path,
+            run_id=run_id,
+            context=context,
+        )
 
     def __getattr__(self, name: str):
         return getattr(self._client, name)
@@ -312,9 +337,18 @@ def _load_model_from_run(client, run, target_class):
     if not hasattr(models, target_class):
         raise ValueError(f"Unknown model class '{target_class}' for run {run.info.run_id}.")
 
+    cleanup_checkpoint = require_downloaded_checkpoint_unlinker(
+        client,
+        context=f"standard loader for {target_class}",
+    )
     model_class = getattr(models, target_class)
     checkpoint_path = download_best_checkpoint(client, run.info.run_id)
     model = load_lightning_module_checkpoint(model_class, checkpoint_path)
+    cleanup_checkpoint(
+        checkpoint_path,
+        run_id=run.info.run_id,
+        context=f"standard loader for {target_class}",
+    )
     default_root_dir = os.path.dirname(checkpoint_path)
     return model, default_root_dir
 
@@ -2122,8 +2156,10 @@ def ensure_selection_metric_for_run(
                 client=client,
             )
     finally:
-        del model
-        post_model_cleanup()
+        try:
+            _teardown_model_after_eval(model)
+        finally:
+            del model
 
     if hasattr(client, "get_run"):
         refreshed_run = client.get_run(candidate_run.info.run_id)
@@ -2679,30 +2715,30 @@ def _evaluate_run(
     dm,
     eval_data_seed: int,
 ):
-    seeds = require_seed_tags(best_run)
-    eval_seed = seeds["seed_eval"]
-    bootstrap_ci_context = _resolve_bootstrap_ci_context(
-        args,
-        eval_data_seed=eval_data_seed,
-    )
-    _prime_model_for_degradation_evaluation(
-        model,
-        args,
-        dm,
-        eval_seed=eval_seed,
-    )
-    logger = _make_eval_logger(best_run.info.run_id, dataset_name, args)
-    trainer = _make_eval_trainer(
-        logger,
-        default_root_dir,
-        args,
-        max_epochs=args.max_epochs,
-        enable_checkpointing=True if args.save_checkpoint else False,
-    )
-    # Disable hyperparameter logging to avoid MLflow conflicts with improvement runs
-    model._log_hyperparams = False
-
     try:
+        seeds = require_seed_tags(best_run)
+        eval_seed = seeds["seed_eval"]
+        bootstrap_ci_context = _resolve_bootstrap_ci_context(
+            args,
+            eval_data_seed=eval_data_seed,
+        )
+        _prime_model_for_degradation_evaluation(
+            model,
+            args,
+            dm,
+            eval_seed=eval_seed,
+        )
+        logger = _make_eval_logger(best_run.info.run_id, dataset_name, args)
+        trainer = _make_eval_trainer(
+            logger,
+            default_root_dir,
+            args,
+            max_epochs=args.max_epochs,
+            enable_checkpointing=True if args.save_checkpoint else False,
+        )
+        # Disable hyperparameter logging to avoid MLflow conflicts with improvement runs
+        model._log_hyperparams = False
+
         _log_common_eval_params(
             logger,
             args,
@@ -3697,8 +3733,10 @@ def test_on_dataset(
                 eval_data_seed=eval_data_seed,
             )
         finally:
-            del model
-            post_model_cleanup()
+            try:
+                _teardown_model_after_eval(model)
+            finally:
+                del model
 
     print(
         f"Evaluation complete: {n_evaluated} evaluated, "

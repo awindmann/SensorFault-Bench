@@ -15,7 +15,10 @@ from .base import (
 )
 from models.ensemble import Ensemble as EnsembleModel
 import models
-from utils.artifacts import load_lightning_module_checkpoint
+from utils.artifacts import (
+    load_lightning_module_checkpoint,
+    require_downloaded_checkpoint_unlinker,
+)
 from utils.parsing import (
     parse_required_positive_int,
     require_namespace_value,
@@ -171,6 +174,10 @@ def build_ensemble_model(client, run):
             f"Ensemble improvement run {run.info.run_id} stores ensemble_top_k={ensemble_top_k} "
             f"but references {len(backbones)} backbones in its spec."
         )
+    cleanup_checkpoint = require_downloaded_checkpoint_unlinker(
+        client,
+        context=f"ensemble loader for wrap run {run.info.run_id}",
+    )
     backbone_modules = []
     for reference in backbones:
         checkpoint_path = download_backbone_reference_checkpoint(client, run, reference)
@@ -181,6 +188,11 @@ def build_ensemble_model(client, run):
             )
         base_class = getattr(models, reference.model_architecture)
         backbone = load_lightning_module_checkpoint(base_class, checkpoint_path)
+        cleanup_checkpoint(
+            checkpoint_path,
+            run_id=reference.run_id,
+            context=f"ensemble backbone for wrap run {run.info.run_id}",
+        )
         backbone_modules.append(backbone)
     ensemble_model = EnsembleModel(backbones=backbone_modules, combine_method=combine_method)
     return ensemble_model, os.getcwd()
