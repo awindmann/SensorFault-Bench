@@ -685,6 +685,7 @@ def _build_datamodule(
         "n_val_samples": args.n_val_samples,
         "perturbation_channel_fraction_max": args.perturbation_channel_fraction_max,
         "perturbation_scenarios": args.perturbation_scenarios,
+        "perturbation_severity_distribution": args.perturbation_severity_distribution,
         "train_split": args.train_split,
         "val_split": args.val_split,
         "purged_fraction": args.purged_fraction,

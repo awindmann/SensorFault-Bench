@@ -1,0 +1,295 @@
+{
+  "architectures": [
+    "SeasonalNaive",
+    "DLinear",
+    "GRU",
+    "ModernTCN",
+    "TSMixer",
+    "PatchTST",
+    "Chronos2"
+  ],
+  "datasets": [
+    "BeijingAir_Tiantan",
+    "Penmanshiel_Hourly_WT08",
+    "ETTh1",
+    "traffic"
+  ],
+  "description": "Supplementary tables of selected clean-validation hyperparameters, training-seed sensitivity, method-baseline effects, the PatchTST near-tie diagnostic, and the benchmark-design sensitivity checks.",
+  "evaluation_windows_per_scenario": 10000,
+  "files": [
+    {
+      "path": "selected_clean_validation_hyperparameters.csv",
+      "role": "selected clean-validation hyperparameters",
+      "row_count": 28,
+      "sha256": "4a4919ed91d9b339f18a56a70405676eba6785ebbaf172a0467b42d830935759",
+      "size_bytes": 6199
+    },
+    {
+      "path": "training_seed_architecture_results.csv",
+      "role": "complete three-training-seed architecture results",
+      "row_count": 84,
+      "sha256": "3e9daa6f384b4790770166185ce16235905d1adcae6f446238ada32bc47ba265",
+      "size_bytes": 33889
+    },
+    {
+      "path": "training_seed_method_results.csv",
+      "role": "complete three-training-seed method-baseline results",
+      "row_count": 408,
+      "sha256": "59be27410c0e28470fd97dad5e1729a058e5aa71d9444e44b1a4caabcf717bef",
+      "size_bytes": 291173
+    },
+    {
+      "path": "patchtst_clean_validation_near_ties.csv",
+      "role": "PatchTST clean-validation near-tie configurations",
+      "row_count": 14,
+      "sha256": "35b3597ff40973c9c802e87b20abf69ca01645aca07a451cf70644e4d038cb77",
+      "size_bytes": 3559
+    },
+    {
+      "path": "patchtst_clean_validation_near_tie_summary.csv",
+      "role": "PatchTST clean-validation near-tie branch summary",
+      "row_count": 2,
+      "sha256": "169371913f889aafb3f49572e88fbcd54c08fb181aa4c2d2623dc17872c1a575",
+      "size_bytes": 270
+    },
+    {
+      "path": "severity_weighting_architecture.csv",
+      "role": "architecture results under uniform and Beta(1,2) severity sampling",
+      "row_count": 28,
+      "sha256": "f0d7b5ac88d79a0e6d7e62d94a8eabeb56f867c5d2e5f8c9b48b200845823359",
+      "size_bytes": 13844
+    },
+    {
+      "path": "severity_weighting_method_pairs.csv",
+      "role": "method-baseline deltas under uniform and Beta(1,2) severity sampling",
+      "row_count": 56,
+      "sha256": "6deddfb9b6b87a60ba444e88a0b96991817a58d6b30d683ca213157dcd5e8824",
+      "size_bytes": 24152
+    },
+    {
+      "path": "severity_weighting_method_means.csv",
+      "role": "dataset-level mean method-baseline deltas under both severity distributions",
+      "row_count": 12,
+      "sha256": "5da2a4cdd2ccac6028ca393b348367b31f8d04bea413430e233bafe4f4e16b0a",
+      "size_bytes": 2390
+    },
+    {
+      "path": "severity_weighting_ranks.csv",
+      "role": "rank agreement and leader changes under Beta(1,2) severity sampling",
+      "row_count": 4,
+      "sha256": "1e3e57adb60a12868c0c40c02cea05fbea09213535a6fdf3363ffdf6e39026c6",
+      "size_bytes": 596
+    },
+    {
+      "path": "severity_weighting_exceptions.csv",
+      "role": "method effects whose sign changes under Beta(1,2) severity sampling",
+      "row_count": 5,
+      "sha256": "05199a5e4ab70e09a09ff89cd7bea01ad3b7dd0b66fb5e7b6c3e149ba8051ff1",
+      "size_bytes": 398
+    },
+    {
+      "path": "fault_direction_architecture.csv",
+      "role": "architecture results with Drift and Spike in the negative direction",
+      "row_count": 28,
+      "sha256": "fe916d65c05a1ef9374b91319f086e8b5335128e4abd8d6d44f69ab43472203b",
+      "size_bytes": 19567
+    },
+    {
+      "path": "timing_local_warp_architecture.csv",
+      "role": "architecture results with the local timing warp in place of TimeCompress",
+      "row_count": 28,
+      "sha256": "fb50b4eef72bda87ba86f7a5a08ace0aff2dbd13442b80b730cedef12519f94d",
+      "size_bytes": 17149
+    },
+    {
+      "path": "timing_time_compress_clipping.csv",
+      "role": "share of TimeCompress output positions held at the window endpoint",
+      "row_count": 6,
+      "sha256": "ed1e7d7728fd249f5a26ee49756c5549e339a2d75f12c87d728e6bbf4e95b7a4",
+      "size_bytes": 491
+    },
+    {
+      "path": "timing_time_compress_omission_architecture.csv",
+      "role": "architecture results with TimeCompress omitted from the scored set",
+      "row_count": 84,
+      "sha256": "fdb06528b7f218baf77cacd9612b80966ef4054b6a454390988f8e44185edb2e",
+      "size_bytes": 41973
+    },
+    {
+      "path": "timing_time_compress_omission_method_pairs.csv",
+      "role": "method-baseline deltas with TimeCompress omitted from the scored set",
+      "row_count": 168,
+      "sha256": "c035ba63b0ae6ffc216b2bd1260ac83342133bcd59c85946a1d8d81d7385c56e",
+      "size_bytes": 133197
+    },
+    {
+      "path": "etth1_task_architecture.csv",
+      "role": "ETTh1 architecture results across target scope and horizon",
+      "row_count": 28,
+      "sha256": "3ee36f16baca9467f3267b2745a48e39428772e79831f4d08bfc10b49d4845ba",
+      "size_bytes": 12682
+    },
+    {
+      "path": "etth1_task_contrasts.csv",
+      "role": "ETTh1 contrasts between target scopes and between horizons",
+      "row_count": 28,
+      "sha256": "0e946f21bc5df5d9958f6c56035cdc316ed52c5fa39ba4f65222680f98d50224",
+      "size_bytes": 8306
+    },
+    {
+      "path": "README.md",
+      "role": "supplementary-table documentation",
+      "sha256": "b6633a78519f25df295097e4556e91f87236f5f752dee5d3d57191685f3b163e",
+      "size_bytes": 3133
+    }
+  ],
+  "robustness_methods": [
+    "randomized_training",
+    "adversarial_training",
+    "fault_augmentation",
+    "revin",
+    "adaptive_robust_loss",
+    "ensemble",
+    "randomized_smoothing"
+  ],
+  "selection_metric": "clean_validation_MSE",
+  "sources": [
+    {
+      "members": [
+        {
+          "path": "artifacts/tables/full_results.csv",
+          "sha256": "8473a18ae305efa0eb23b06e9a89658ce1c97f1c297c25f977f3fd019b3e508d"
+        },
+        {
+          "path": "artifacts/tables/improvement_deltas_selected.csv",
+          "sha256": "a5312050b4163f787e48e144c38d7de9d962c2d5bd953175c1dcd4c815372018"
+        },
+        {
+          "path": "artifacts/tables/scenario_summary.csv",
+          "sha256": "cd106a098e219f92610957d76d1d47d527209d9f2a4614718888b693a6bf9970"
+        }
+      ],
+      "role": "training and search seed 42 result source",
+      "sha256": "5701ba7a356b1ee2a3bc8c99fef7a5befba59658c570e6bdbc3b0354279416a0",
+      "source_id": "training_seed_42_tables"
+    },
+    {
+      "members": [
+        {
+          "path": "artifacts/tables/full_results.csv",
+          "sha256": "c961b41d987aa1b1c97cef1657166f227090203aa5439ba7157f2f74cde68d59"
+        },
+        {
+          "path": "artifacts/tables/improvement_deltas_selected.csv",
+          "sha256": "f50ca672059e62b78a85e8c593d4ecfd734bdca5e219ee8e1e29f38b2d92507d"
+        },
+        {
+          "path": "artifacts/tables/scenario_summary.csv",
+          "sha256": "d9859636d76ef87b8d2554c6303a81e88036ce6b91752b50ddcb39c4ffaa5821"
+        }
+      ],
+      "role": "training and search seed 1001 result source",
+      "sha256": "a3ce51cb6452ef5dd1c135afbf2beeff7b08b50a40141a4d54402c14eccf5901",
+      "source_id": "training_seed_1001_tables"
+    },
+    {
+      "members": [
+        {
+          "path": "artifacts/tables/full_results.csv",
+          "sha256": "b31404489d36f9ee0d1f19381b3a1184fc449f342a4da2dfba0270ea2d312354"
+        },
+        {
+          "path": "artifacts/tables/improvement_deltas_selected.csv",
+          "sha256": "0b3341a3ae51520251932c7f1d3192cc0a1c959942e94f140054c2186c60fd3e"
+        },
+        {
+          "path": "artifacts/tables/scenario_summary.csv",
+          "sha256": "60f8df8c775119e73b9021da1245a6837e9201be2af58850ea5d9c9ee8315a1a"
+        }
+      ],
+      "role": "training and search seed 1002 result source",
+      "sha256": "52ce6039f859b5f37f7d750a70c9b9f4d39afc8bfc368a177cc617f089c925c6",
+      "source_id": "training_seed_1002_tables"
+    },
+    {
+      "path": "configs/baseline_hparams.yaml",
+      "role": "baseline hyperparameter search grid",
+      "sha256": "15cdabf5ffd8639519b11ba0a03418813b9db002cfb0a374dcf2bd63d58596f9"
+    },
+    {
+      "path": "paper_artifact/compute_accounting/compute_ledger_official_runs.csv",
+      "role": "canonical baseline run-signature ledger",
+      "sha256": "3f1c9af7023d4124c4488bd6615a07961a4d1d74d8437d6889898d89d3692a6f"
+    },
+    {
+      "role": "PatchTST clean-validation near-tie diagnostic",
+      "sha256": "7b185236c1cc83784ecb42ca0a09b46e1e471043e8f0c18981bc7415dc117f60",
+      "source_id": "patchtst_near_tie_scope_runs"
+    },
+    {
+      "role": "verified evidence table: architecture results under uniform and Beta(1,2) severity sampling",
+      "sha256": "496c8bfcae4d714149c07de993f7f08cb7c9b6266c85429976ce96bec4d55247",
+      "source_id": "severity_weighting_architecture_evidence"
+    },
+    {
+      "role": "verified evidence table: method-baseline deltas under uniform and Beta(1,2) severity sampling",
+      "sha256": "af4fcb66c6edecc9c1ec1afe8befeb0a216e377578b9f2cdfa61e82d0d81f52b",
+      "source_id": "severity_weighting_method_pairs_evidence"
+    },
+    {
+      "role": "verified evidence table: dataset-level mean method-baseline deltas under both severity distributions",
+      "sha256": "1868b53e961f52010f60dc4a01d6840f473c8fb48531e3114aad23204b0c8f3c",
+      "source_id": "severity_weighting_method_means_evidence"
+    },
+    {
+      "role": "verified evidence table: rank agreement and leader changes under Beta(1,2) severity sampling",
+      "sha256": "1e3e57adb60a12868c0c40c02cea05fbea09213535a6fdf3363ffdf6e39026c6",
+      "source_id": "severity_weighting_ranks_evidence"
+    },
+    {
+      "role": "verified evidence table: method effects whose sign changes under Beta(1,2) severity sampling",
+      "sha256": "05199a5e4ab70e09a09ff89cd7bea01ad3b7dd0b66fb5e7b6c3e149ba8051ff1",
+      "source_id": "severity_weighting_exceptions_evidence"
+    },
+    {
+      "role": "verified evidence table: architecture results with Drift and Spike in the negative direction",
+      "sha256": "464f20dc196a07ad2433b1cfb7876d3aa12b8b3ee0e7c338e5d757602620a3dc",
+      "source_id": "fault_direction_architecture_evidence"
+    },
+    {
+      "role": "verified evidence table: architecture results with the local timing warp in place of TimeCompress",
+      "sha256": "2b5a70b7f148cc40950640461b16691060e26141bb55347aedcf85aebd41d36e",
+      "source_id": "timing_local_warp_architecture_evidence"
+    },
+    {
+      "role": "verified evidence table: share of TimeCompress output positions held at the window endpoint",
+      "sha256": "ed1e7d7728fd249f5a26ee49756c5549e339a2d75f12c87d728e6bbf4e95b7a4",
+      "source_id": "timing_time_compress_clipping_evidence"
+    },
+    {
+      "role": "verified evidence table: architecture results with TimeCompress omitted from the scored set",
+      "sha256": "e2f59845bc668c794673470751a9ffbaa37c8fed73c0d1a2ac5271c782375c67",
+      "source_id": "timing_time_compress_omission_architecture_evidence"
+    },
+    {
+      "role": "verified evidence table: method-baseline deltas with TimeCompress omitted from the scored set",
+      "sha256": "9f6b19d70d4d8391b793b9be28052d0c9963c6e20eed4cdbbc7d2c3b4efee6f4",
+      "source_id": "timing_time_compress_omission_method_pairs_evidence"
+    },
+    {
+      "role": "verified evidence table: ETTh1 architecture results across target scope and horizon",
+      "sha256": "355e50fa74a0a7629f192eb538255452c6676e0c9bfdca7f1b14d318b2be0964",
+      "source_id": "etth1_task_architecture_evidence"
+    },
+    {
+      "role": "verified evidence table: ETTh1 contrasts between target scopes and between horizons",
+      "sha256": "0e946f21bc5df5d9958f6c56035cdc316ed52c5fa39ba4f65222680f98d50224",
+      "source_id": "etth1_task_contrasts_evidence"
+    }
+  ],
+  "training_seeds": [
+    42,
+    1001,
+    1002
+  ]
+}

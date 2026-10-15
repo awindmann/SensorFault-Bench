@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,10 +29,19 @@ from scripts.generate_paper_figure_csvs import (
     PRIMARY_TABLES as PAPER_INPUT_SOURCE_TABLES,
     build_figure_csv_frames_from_tables,
 )
+from scripts.build_supplementary_tables import (
+    SUPPLEMENTARY_TABLES_DIRNAME,
+    SUPPLEMENTARY_TABLES_MANIFEST,
+    build_supplementary_tables,
+)
 
 
-ARTIFACT_ID = "sensorfault-bench-neurips2026-paper-artifact-v1"
+ARTIFACT_ID = "sensorfault-bench-neurips2026-paper-artifact-v2"
 MAX_FILE_BYTES = 5 * 1024 * 1024
+DEFAULT_CONFIGURATION_SOURCE_ID = "default_configuration"
+COMPUTE_ACCOUNTING_DIRNAME = "compute_accounting"
+# Subtrees that other tools write into the bundle. A forced rebuild keeps them.
+CARRIED_OVER_SUBTREES = ("R", COMPUTE_ACCOUNTING_DIRNAME)
 
 PRIVATE_VALUE_PATTERNS = {
     "local home path": re.compile(r"/Users/[A-Za-z0-9_.-]+"),
@@ -251,15 +260,15 @@ class ForecastExampleSpec:
 
 SOURCE_SPECS = (
     SourceSpec(
-        source_id="primary_clean_2026-04-26_10k",
+        source_id=DEFAULT_CONFIGURATION_SOURCE_ID,
         export_date="2026-04-26",
-        role="primary clean-selected paper evidence",
+        role="results of the default configuration",
         relative_export_path="exports/2026-04-26_clean/artifacts_clean_final_10k",
         expected_selection_mode="clean",
         table_files=PRIMARY_TABLES,
     ),
     SourceSpec(
-        source_id="selector_perturbed_validation_2026-04-29_10k",
+        source_id="selector_perturbed_validation",
         export_date="2026-04-29",
         role="selector-pressure sensitivity evidence",
         relative_export_path=(
@@ -269,7 +278,7 @@ SOURCE_SPECS = (
         table_files=SELECTOR_TABLES,
     ),
     SourceSpec(
-        source_id="eval_seed_0_2026-04-30_10k",
+        source_id="eval_data_seed_0",
         export_date="2026-04-30",
         role="evaluation-data seed sensitivity evidence",
         relative_export_path="exports/2026-04-30_seed01/artifacts_seed0",
@@ -277,7 +286,7 @@ SOURCE_SPECS = (
         table_files=SEED_TABLES,
     ),
     SourceSpec(
-        source_id="eval_seed_1_2026-04-30_10k",
+        source_id="eval_data_seed_1",
         export_date="2026-04-30",
         role="evaluation-data seed sensitivity evidence",
         relative_export_path="exports/2026-04-30_seed01/artifacts_seed1",
@@ -285,7 +294,7 @@ SOURCE_SPECS = (
         table_files=SEED_TABLES,
     ),
     SourceSpec(
-        source_id="eval_seed_2_2026-05-01_10k",
+        source_id="eval_data_seed_2",
         export_date="2026-05-01",
         role="evaluation-data seed sensitivity evidence",
         relative_export_path="exports/2026-05-01_seed23/artifacts_seed2",
@@ -293,7 +302,7 @@ SOURCE_SPECS = (
         table_files=SEED_TABLES,
     ),
     SourceSpec(
-        source_id="eval_seed_3_2026-05-01_10k",
+        source_id="eval_data_seed_3",
         export_date="2026-05-01",
         role="evaluation-data seed sensitivity evidence",
         relative_export_path="exports/2026-05-01_seed23/artifacts_seed3",
@@ -301,7 +310,7 @@ SOURCE_SPECS = (
         table_files=SEED_TABLES,
     ),
     SourceSpec(
-        source_id="fixed_channel_fraction_0p5_2026-05-02_10k",
+        source_id="fixed_channel_fraction_0p5",
         export_date="2026-05-02",
         role="fixed selected-channel-fraction sensitivity evidence",
         relative_export_path="exports/2026-05-02_ch05/artifacts",
@@ -310,7 +319,7 @@ SOURCE_SPECS = (
         table_files=CHANNEL_FRACTION_TABLES,
     ),
     SourceSpec(
-        source_id="fixed_channel_fraction_0p25_2026-05-03_10k",
+        source_id="fixed_channel_fraction_0p25",
         export_date="2026-05-03",
         role="fixed selected-channel-fraction sensitivity evidence",
         relative_export_path="exports/2026-05-03_ch025/artifacts",
@@ -440,7 +449,16 @@ def _parse_args() -> argparse.Namespace:
         "--source-root",
         type=Path,
         required=True,
-        help="Path to the SensorFault-Bench source repository.",
+        help="Path to the experiment-output source tree used to build the artifact.",
+    )
+    parser.add_argument(
+        "--supplementary-source-dir",
+        type=Path,
+        required=True,
+        help=(
+            "Directory holding the frozen inputs of the supplementary tables under "
+            "their neutral file names, verified against pinned SHA-256 checksums."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -697,56 +715,91 @@ def _write_readme(output_root: Path) -> Path:
     readme_path.write_text(
         f"""# Paper Artifact
 
-This directory is the frozen paper-artifact identity for the NeurIPS 2026
-submission. It contains a manifest-indexed result table bundle and a figure
-reproduction surface.
+This directory is the entry point for the NeurIPS 2026 paper "Benchmarking
+Sensor-Fault Robustness in Forecasting". The paper corresponds to release
+`v1.0.0` of this repository. Later releases can extend the benchmark, but a
+checkout of `v1.0.0` always restores the code, results, and evidence of the
+paper.
+
+## Paper to Repository Map
+
+| Paper section | Bundled results | Commands |
+| --- | --- | --- |
+| "Results" and "Extended results" | `tables/{DEFAULT_CONFIGURATION_SOURCE_ID}/`, `{PAPER_INPUTS_DIRNAME}/` | [Reproducing the paper](../README.md#reproducing-the-paper) |
+| "Sensitivity to the evaluation data seed", "Selector pressure", and "Sensitivity to the number of affected channels" | `tables/eval_data_seed_*/`, `tables/selector_perturbed_validation/`, `tables/fixed_channel_fraction_*/` | [Evaluation data seed, selector, and channel count](../docs/sensitivity_analyses.md#evaluation-data-seed-selector-and-channel-count) |
+| "Sensitivity to severity weighting" | `{SUPPLEMENTARY_TABLES_DIRNAME}/severity_weighting_*.csv` | [Severity weighting](../docs/sensitivity_analyses.md#severity-weighting) |
+| "Sensitivity to fault direction" | `{SUPPLEMENTARY_TABLES_DIRNAME}/fault_direction_architecture.csv` | [Fault direction](../docs/sensitivity_analyses.md#fault-direction) |
+| "Dependence on TimeCompress" | `{SUPPLEMENTARY_TABLES_DIRNAME}/timing_*.csv` | [Timing](../docs/sensitivity_analyses.md#timing) |
+| "ETTh1 target scope and horizon ablation" | `{SUPPLEMENTARY_TABLES_DIRNAME}/etth1_task_*.csv` | [ETTh1 target scope and horizon](../docs/sensitivity_analyses.md#etth1-target-scope-and-horizon) |
+| "Training seed sensitivity" | `{SUPPLEMENTARY_TABLES_DIRNAME}/training_seed_*.csv`, `{SUPPLEMENTARY_TABLES_DIRNAME}/patchtst_clean_validation_near_tie*.csv` | [Training and search seeds](../docs/sensitivity_analyses.md#training-and-search-seeds) |
+| "Full experimental details" | `{SUPPLEMENTARY_TABLES_DIRNAME}/selected_clean_validation_hyperparameters.csv`, `{COMPUTE_ACCOUNTING_DIRNAME}/` | [Compute accounting](#compute-accounting) |
+| Figures | `R/figures/` | [Figure scripts](R/README.md) |
+
+## Compute Accounting
+
+[`{COMPUTE_ACCOUNTING_DIRNAME}/`]({COMPUTE_ACCOUNTING_DIRNAME}/) records the runs, evaluation
+episodes, and GPU-hours of the paper's experiments: the default configuration,
+the reruns with training and search seeds 1001 and 1002, the three additional
+ETTh1 task settings, and the evaluations for the sensitivity checks. An overhead
+audit covers the remaining recorded project compute.
+[`scripts/compute_accounting_ledger.py`](../scripts/compute_accounting_ledger.py)
+writes the folder's four CSV files in one read-only pass over the MLflow
+experiments and analysis windows of
+[`configs/reporting/compute_accounting.yaml`](../configs/reporting/compute_accounting.yaml).
+Before it writes, the default configuration must reproduce the compute
+accounting of version 0.1.0, which the script reads from that release. Running
+the script needs access to the tracking server that holds the recorded runs.
 
 ## Bundle Contents
 
-- `MANIFEST.json`: machine-readable index for the result table bundle,
-  including checksums, dataset scope, source identities, generation commands,
-  and intentional omissions.
-- `tables/`: CSV analysis tables organized by bundled evidence source, including
-  the primary clean-selected results, selector-pressure sensitivity tables,
-  evaluation-data seed sensitivity tables, and fixed selected-channel-fraction
-  sensitivity tables.
-- `{PAPER_INPUTS_DIRNAME}/`: derived paper-facing CSV inputs generated from the
-  bundled primary tables.
-- `config/eval_context.json`: public-safe evaluation context for the bundled
-  analysis sources.
-- `forecast_examples/manifest.json`: curated qualitative forecast-example sample
-  identities and trace-bundle status.
-- `R/`: figure reproduction surface with paper figure scripts, figure input
-  CSVs, curated forecast traces, and polished figure PDFs.
+- `MANIFEST.json`: the machine-readable index of the bundle, with checksums,
+  the dataset scope, source identifiers, generation commands, and the content
+  that the bundle leaves out.
+- `tables/`: the CSV analysis tables, one folder per evaluated setting.
+  `{DEFAULT_CONFIGURATION_SOURCE_ID}/` holds the results of the default configuration. The
+  other folders hold the sensitivity checks of evaluation data seeds, selector
+  pressure, and fixed fractions of affected channels.
+- `{PAPER_INPUTS_DIRNAME}/`: the CSV inputs of the paper's tables and figures, derived
+  from the tables of the default configuration.
+- `{SUPPLEMENTARY_TABLES_DIRNAME}/`: the hyperparameters selected on clean validation
+  data, a diagnostic of near-ties in clean validation loss for PatchTST, and the
+  architecture and method results for training and search seeds 42, 1001,
+  and 1002. Further tables cover the checks of severity weighting, fault
+  direction, timing, and the ETTh1 task. Its `README.md` describes each file.
+- `{COMPUTE_ACCOUNTING_DIRNAME}/`: the compute accounting described above.
+- `config/eval_context.json`: the evaluation context of the bundled analysis
+  sources.
+- `forecast_examples/manifest.json`: the sample identities of the curated
+  forecast examples, with a record of which traces the bundle contains.
+- `R/`: the scripts that reproduce the paper figures, together with their input
+  CSVs, the curated forecast traces, and the rendered PDFs.
 
-The artifact intentionally excludes checkpoints, MLflow run stores, raw
-datasets, processed runtime datasets, broad sample-level dumps, raw private
-analysis configs, full forecast trace dumps outside the curated R extracts, and
-complete historical export trees. Dataset metadata for the two curated derived
-records is handled separately through the dataset submission route.
+The artifact excludes checkpoints, MLflow run stores, raw and processed
+datasets, complete outputs per sample, raw analysis configurations, forecast
+traces beyond the curated R extracts, and complete export trees. The two
+curated datasets are published as separate dataset records with their own
+metadata (see `data/README.md` in the repository root).
 
 ## Paper Inputs
 
-The files in `{PAPER_INPUTS_DIRNAME}/` are the small CSV inputs used by the
-paper's table and figure workflows. They are generated from the bundled primary
-source tables during artifact construction and are listed in `MANIFEST.json`
-with row counts, checksums, and source-table provenance.
+The files in `{PAPER_INPUTS_DIRNAME}/` are the small CSV inputs from which the
+paper's tables and figures are built. The artifact builder derives them from the
+tables of the default configuration and lists them in `MANIFEST.json` with row
+counts, checksums, and source tables.
 
 ## Provenance
 
-All paths needed to inspect the artifact are relative to this directory. Source
-identifiers such as `primary_clean_2026-04-26_10k` are stable evidence labels
-inside the bundle. Build-time source export paths are kept in `MANIFEST.json`
-for auditability, but the human-facing structure is the bundled directory tree
-above.
+All paths needed to inspect the artifact are relative to this directory. Each
+folder in `tables/` carries the name of its evaluated setting, which
+`MANIFEST.json` uses as the source identifier and which stays fixed across
+builds. For each source, the manifest also records the export date and the path
+from which the build read the tables. These records serve to audit the build,
+while inspecting the results needs only the directory tree described above.
 
 ## Verification
 
-Run the paper-artifact tests from the repository root:
-
-```bash
-PYTHONPATH=. uv run pytest tests/test_repository_surface.py tests/test_paper_artifact_manifest.py -q
-```
+`MANIFEST.json` and `{SUPPLEMENTARY_TABLES_DIRNAME}/manifest.json` record the SHA-256
+checksum and byte size of every bundled file.
 """,
         encoding="utf-8",
     )
@@ -893,20 +946,26 @@ def _collect_optional_tree_records(
 
 
 def _compute_accounting_summary(
+    *,
+    output_root: Path,
     records: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     if not records:
         return None
-    evidence_root = PUBLIC_REPO_ROOT / "evidence" / "compute_accounting"
-    official_path = evidence_root / "compute_ledger_official_runs.csv"
-    overhead_path = evidence_root / "compute_overhead_audit.csv"
-    if not official_path.is_file() or not overhead_path.is_file():
+    compute_root = output_root / COMPUTE_ACCOUNTING_DIRNAME
+    official_path = compute_root / "compute_ledger_official_runs.csv"
+    episode_path = compute_root / "compute_evaluation_episodes.csv"
+    overhead_path = compute_root / "compute_overhead_audit.csv"
+    if not all(path.is_file() for path in (official_path, episode_path, overhead_path)):
         return None
 
     with official_path.open(newline="", encoding="utf-8") as handle:
         official_rows = list(csv.DictReader(handle))
+    with episode_path.open(newline="", encoding="utf-8") as handle:
+        episode_rows = list(csv.DictReader(handle))
     with overhead_path.open(newline="", encoding="utf-8") as handle:
         overhead_rows = list(csv.DictReader(handle))
+    analysis_rows = [row for row in episode_rows if row["analysis"] != ""]
 
     def _hours(rows: list[dict[str, str]]) -> float:
         total = 0.0
@@ -917,7 +976,7 @@ def _compute_accounting_summary(
         return round(total, 6)
 
     return {
-        "root": "../evidence/compute_accounting",
+        "root": COMPUTE_ACCOUNTING_DIRNAME,
         "ledger_script": "scripts/compute_accounting_ledger.py",
         "files": records,
         "official_ledger_rows": len(official_rows),
@@ -926,6 +985,12 @@ def _compute_accounting_summary(
         "overhead_unique_run_ids": len({row["run_id"] for row in overhead_rows}),
         "official_duration_hours": _hours(official_rows),
         "overhead_duration_hours": _hours(overhead_rows),
+        "evaluation_episode_rows": len(episode_rows),
+        "analysis_evaluation_episodes": len(analysis_rows),
+        "analysis_evaluation_hours": round(
+            sum(float(row["span_seconds"]) for row in analysis_rows) / 3600.0,
+            6,
+        ),
         "duration_unit_note": (
             "Single-MIG-device hours under the one-device-per-job execution model."
         ),
@@ -963,9 +1028,9 @@ def _derived_paper_input_record(
 def _write_derived_paper_inputs(
     *,
     output_root: Path,
-    primary_source_id: str,
+    default_source_id: str,
 ) -> list[dict[str, Any]]:
-    source_table_dir = output_root / "tables" / primary_source_id
+    source_table_dir = output_root / "tables" / default_source_id
     table_frames: dict[str, pd.DataFrame] = {}
     for table_name in PAPER_INPUT_SOURCE_TABLES:
         table_path = source_table_dir / table_name
@@ -991,7 +1056,7 @@ def _write_derived_paper_inputs(
                 output_root=output_root,
                 path=output_path,
                 filename=filename,
-                source_id=primary_source_id,
+                source_id=default_source_id,
                 row_count=len(frame),
             )
         )
@@ -1008,10 +1073,12 @@ def _build_manifest(
     derived_paper_input_records: list[dict[str, Any]],
     csv_metadata_by_source: dict[str, dict[str, Any]],
     support_file_records: list[dict[str, Any]],
+    supplementary_tables: dict[str, Any],
+    supplementary_file_records: list[dict[str, Any]],
     r_file_records: list[dict[str, Any]],
     compute_file_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    primary_context = contexts["primary_clean_2026-04-26_10k"]
+    default_context = contexts[DEFAULT_CONFIGURATION_SOURCE_ID]
     source_git = _git_metadata(PUBLIC_REPO_ROOT)
 
     source_exports = []
@@ -1036,25 +1103,30 @@ def _build_manifest(
         )
 
     files = sorted(
-        [*support_file_records, *table_records, *derived_paper_input_records],
+        [
+            *support_file_records,
+            *table_records,
+            *derived_paper_input_records,
+            *supplementary_file_records,
+        ],
         key=lambda record: record["path"],
     )
     manifest = {
         "artifact_id": ARTIFACT_ID,
-        "artifact_version": 1,
+        "artifact_version": 2,
         "built_at_utc": build_time_utc,
         "source_repository": {
             "name": "SensorFault-Bench",
             "git_commit": source_git["commit"],
         },
-        "primary_source_id": "primary_clean_2026-04-26_10k",
-        "dataset_scope": primary_context["data_files"],
-        "test_metric": primary_context["test_metric"],
-        "n_test_samples": primary_context["n_test_samples"],
-        "improvement_selection_mode": primary_context[
+        "default_configuration_source_id": DEFAULT_CONFIGURATION_SOURCE_ID,
+        "dataset_scope": default_context["data_files"],
+        "test_metric": default_context["test_metric"],
+        "n_test_samples": default_context["n_test_samples"],
+        "improvement_selection_mode": default_context[
             "improvement_selection_mode"
         ],
-        "perturbation_scenarios": primary_context["perturbation_scenarios"],
+        "perturbation_scenarios": default_context["perturbation_scenarios"],
         "robustness_parameters": {
             "phi": None,
             "cvar_alpha": None,
@@ -1064,7 +1136,7 @@ def _build_manifest(
             ),
         },
         "data_config_signatures": _freeze_sets(
-            csv_metadata_by_source["primary_clean_2026-04-26_10k"][
+            csv_metadata_by_source[DEFAULT_CONFIGURATION_SOURCE_ID][
                 "data_config_signatures"
             ]
         ),
@@ -1073,6 +1145,27 @@ def _build_manifest(
             derived_paper_input_records,
             key=lambda record: record["path"],
         ),
+        "supplementary_tables": {
+            "root": SUPPLEMENTARY_TABLES_DIRNAME,
+            "manifest_path": (
+                f"{SUPPLEMENTARY_TABLES_DIRNAME}/{SUPPLEMENTARY_TABLES_MANIFEST}"
+            ),
+            "training_seeds": supplementary_tables["training_seeds"],
+            "datasets": supplementary_tables["datasets"],
+            "architectures": supplementary_tables["architectures"],
+            "robustness_methods": supplementary_tables["robustness_methods"],
+            "selection_metric": supplementary_tables["selection_metric"],
+            "evaluation_windows_per_scenario": supplementary_tables[
+                "evaluation_windows_per_scenario"
+            ],
+            "files": [
+                {
+                    **record,
+                    "path": f"{SUPPLEMENTARY_TABLES_DIRNAME}/{record['path']}",
+                }
+                for record in supplementary_tables["files"]
+            ],
+        },
         "forecast_examples": {
             "manifest_path": FORECAST_EXAMPLE_MANIFEST_PATH,
             "source_id": FORECAST_EXAMPLE_SOURCE_ID,
@@ -1109,7 +1202,10 @@ def _build_manifest(
             "file_count": len(r_file_records),
             "files": r_file_records,
         }
-    compute_summary = _compute_accounting_summary(compute_file_records)
+    compute_summary = _compute_accounting_summary(
+        output_root=output_root,
+        records=compute_file_records,
+    )
     if compute_summary is not None:
         manifest["compute_accounting"] = compute_summary
     return manifest
@@ -1118,44 +1214,80 @@ def _build_manifest(
 def build_paper_artifact(
     *,
     source_root: Path,
+    supplementary_source_dir: Path,
     output_root: Path,
     build_time_utc: str,
     force: bool,
 ) -> None:
+    """Build the bundle in a staging directory and replace ``output_root`` only on success.
+
+    A failed build leaves an existing bundle untouched. A forced rebuild
+    carries the existing ``R/`` and ``compute_accounting/`` subtrees over
+    unchanged, because other tools write them.
+    """
     source_root = source_root.resolve()
     output_root = output_root.resolve()
     if not source_root.is_dir():
         raise FileNotFoundError(f"source root does not exist: {source_root}")
+    if output_root.exists() and not force:
+        raise FileExistsError(
+            f"{output_root} already exists. Pass --force to replace it."
+        )
 
-    preserved_r_tmp: tempfile.TemporaryDirectory[str] | None = None
-    preserved_r_tree: Path | None = None
-    if output_root.exists():
-        if not force:
-            raise FileExistsError(
-                f"{output_root} already exists. Pass --force to replace it."
-            )
-        existing_r_tree = output_root / "R"
-        if existing_r_tree.exists():
-            preserved_r_tmp = tempfile.TemporaryDirectory(
-                prefix="sensorfault-paper-artifact-r-"
-            )
-            preserved_r_tree = Path(preserved_r_tmp.name) / "R"
-            shutil.move(str(existing_r_tree), str(preserved_r_tree))
-        try:
-            shutil.rmtree(output_root)
-        except Exception:
-            if preserved_r_tree is not None and preserved_r_tree.exists():
-                output_root.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(preserved_r_tree), str(existing_r_tree))
-            if preserved_r_tmp is not None:
-                preserved_r_tmp.cleanup()
-            raise
-    output_root.mkdir(parents=True)
-    if preserved_r_tree is not None:
-        shutil.move(str(preserved_r_tree), str(output_root / "R"))
-    if preserved_r_tmp is not None:
-        preserved_r_tmp.cleanup()
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    # Staging beside the output keeps the final swap a same-filesystem rename.
+    staging_parent = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}.staging-",
+            dir=output_root.parent,
+        )
+    )
+    try:
+        staging_root = staging_parent / output_root.name
+        staging_root.mkdir()
+        for subtree in CARRIED_OVER_SUBTREES:
+            existing_tree = output_root / subtree
+            if existing_tree.exists():
+                shutil.copytree(existing_tree, staging_root / subtree)
+        _write_paper_artifact(
+            source_root=source_root,
+            supplementary_source_dir=supplementary_source_dir,
+            output_root=staging_root,
+            build_time_utc=build_time_utc,
+        )
+        _replace_output_root(staging_root=staging_root, output_root=output_root)
+    finally:
+        shutil.rmtree(staging_parent)
 
+
+def _replace_output_root(*, staging_root: Path, output_root: Path) -> None:
+    if not output_root.exists():
+        staging_root.rename(output_root)
+        return
+    retired_parent = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}.previous-",
+            dir=output_root.parent,
+        )
+    )
+    retired_root = retired_parent / output_root.name
+    output_root.rename(retired_root)
+    try:
+        staging_root.rename(output_root)
+    except BaseException:
+        retired_root.rename(output_root)
+        retired_parent.rmdir()
+        raise
+    shutil.rmtree(retired_parent)
+
+
+def _write_paper_artifact(
+    *,
+    source_root: Path,
+    supplementary_source_dir: Path,
+    output_root: Path,
+    build_time_utc: str,
+) -> None:
     contexts: dict[str, dict[str, Any]] = {}
     table_records: list[dict[str, Any]] = []
     csv_metadata_by_source: dict[str, dict[str, Any]] = {}
@@ -1189,8 +1321,23 @@ def build_paper_artifact(
     forecast_manifest_path = _write_forecast_example_manifest(output_root)
     derived_paper_input_records = _write_derived_paper_inputs(
         output_root=output_root,
-        primary_source_id="primary_clean_2026-04-26_10k",
+        default_source_id=DEFAULT_CONFIGURATION_SOURCE_ID,
     )
+    supplementary_root = output_root / SUPPLEMENTARY_TABLES_DIRNAME
+    supplementary_tables = build_supplementary_tables(
+        source_dir=supplementary_source_dir,
+        repo_root=PUBLIC_REPO_ROOT,
+        output_root=supplementary_root,
+    )
+    supplementary_file_records = [
+        _file_record(
+            output_root,
+            path,
+            "supplementary table file",
+        )
+        for path in sorted(supplementary_root.iterdir())
+        if path.is_file()
+    ]
     support_file_records = [
         _file_record(output_root, readme_path, "paper artifact documentation"),
         _file_record(
@@ -1210,8 +1357,8 @@ def build_paper_artifact(
         role="R figure reproduction subartifact file",
     )
     compute_file_records = _collect_optional_tree_records(
-        repo_root=PUBLIC_REPO_ROOT,
-        directory=PUBLIC_REPO_ROOT / "evidence" / "compute_accounting",
+        repo_root=output_root,
+        directory=output_root / COMPUTE_ACCOUNTING_DIRNAME,
         role="compute-accounting evidence file",
     )
 
@@ -1224,6 +1371,8 @@ def build_paper_artifact(
         derived_paper_input_records=derived_paper_input_records,
         csv_metadata_by_source=csv_metadata_by_source,
         support_file_records=support_file_records,
+        supplementary_tables=supplementary_tables,
+        supplementary_file_records=supplementary_file_records,
         r_file_records=r_file_records,
         compute_file_records=compute_file_records,
     )
@@ -1239,9 +1388,10 @@ def main() -> None:
     args = _parse_args()
     build_time_utc = args.build_time_utc
     if build_time_utc is None:
-        build_time_utc = datetime.now(UTC).replace(microsecond=0).isoformat()
+        build_time_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     build_paper_artifact(
         source_root=args.source_root,
+        supplementary_source_dir=args.supplementary_source_dir,
         output_root=args.output,
         build_time_utc=build_time_utc,
         force=args.force,

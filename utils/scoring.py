@@ -442,6 +442,42 @@ def required_degradation_metric_keys(
     return tuple(required_keys)
 
 
+def _unexpected_bundle_metric_keys(
+    metrics: Mapping[str, object],
+    *,
+    metric_prefix: str,
+    required_metric_keys: Sequence[str],
+    active_scenario_indices: Sequence[int],
+) -> list[str]:
+    """Return keys under ``metric_prefix`` that do not belong to the active bundle.
+
+    Scenario metrics are keyed by scenario position. When a run is reevaluated
+    with fewer scenarios, MLflow keeps the metrics of the dropped positions
+    because it cannot delete single metrics. These keys belong to the replaced
+    evaluation context and are never read, so they are not reported. Every other
+    key outside the required set is reported.
+    """
+    required = set(required_metric_keys)
+    active = set(active_scenario_indices)
+    scenario_prefix = f"{metric_prefix}scenario/"
+    unexpected: list[str] = []
+    for raw_metric_key in metrics:
+        key_text = str(raw_metric_key).strip()
+        if not key_text.startswith(metric_prefix) or key_text in required:
+            continue
+        if key_text.startswith(scenario_prefix):
+            idx_token, _, metric_name = key_text[len(scenario_prefix):].partition("/")
+            if (
+                idx_token.isdigit()
+                and idx_token == str(int(idx_token))
+                and int(idx_token) not in active
+                and metric_name in _DEGRADATION_SCENARIO_METRICS
+            ):
+                continue
+        unexpected.append(key_text)
+    return sorted(unexpected)
+
+
 def require_logged_degradation_metric_bundle(
     metrics: Mapping[str, object] | None,
     *,
@@ -475,11 +511,11 @@ def require_logged_degradation_metric_bundle(
             metric_key=metric_key,
         )
     metric_prefix = f"{build_degradation_metric_prefix(test_metric=test_metric)}/"
-    unexpected_metric_keys = sorted(
-        key_text
-        for raw_metric_key in metrics
-        for key_text in (str(raw_metric_key).strip(),)
-        if key_text.startswith(metric_prefix) and key_text not in required_metric_keys
+    unexpected_metric_keys = _unexpected_bundle_metric_keys(
+        metrics,
+        metric_prefix=metric_prefix,
+        required_metric_keys=required_metric_keys,
+        active_scenario_indices=tuple(normalized_idx_to_name),
     )
     if unexpected_metric_keys:
         preview = ", ".join(unexpected_metric_keys[:8])
@@ -622,11 +658,11 @@ def require_logged_fixed_channel_fraction_metric_bundle(
         perturbation_channel_fraction_max=perturbation_channel_fraction_max,
     )
     metric_prefix = f"{metric_prefix}/"
-    unexpected_metric_keys = sorted(
-        key_text
-        for raw_metric_key in metrics
-        for key_text in (str(raw_metric_key).strip(),)
-        if key_text.startswith(metric_prefix) and key_text not in required_metric_keys
+    unexpected_metric_keys = _unexpected_bundle_metric_keys(
+        metrics,
+        metric_prefix=metric_prefix,
+        required_metric_keys=required_metric_keys,
+        active_scenario_indices=tuple(normalized_idx_to_name),
     )
     if unexpected_metric_keys:
         preview = ", ".join(unexpected_metric_keys[:8])
@@ -1091,11 +1127,12 @@ def validate_degradation_scenario_summary(
         raise ValueError(
             f"{context_name} err_clean_global must be constant across rows."
         )
+    # Percentile bootstrap bounds need not contain the point estimate, so only
+    # their order is validated.
     for metric_name in ("err_pert", "D"):
         lo = work[f"{metric_name}_CI_lo"].to_numpy(dtype=float)
-        value = work[metric_name].to_numpy(dtype=float)
         hi = work[f"{metric_name}_CI_hi"].to_numpy(dtype=float)
-        if np.any((lo > value) | (value > hi)):
+        if np.any(lo > hi):
             raise ValueError(
                 f"{context_name} has invalid {metric_name} confidence interval ordering."
             )
@@ -2271,48 +2308,6 @@ def extract_required_degradation_scenario_metrics(
             output_name=f"{metric_name}_CI_hi",
         )
     return scenario_bundle
-
-
-def extract_required_degradation_scenario_metric_with_ci(
-    metrics: Mapping[str, object],
-    *,
-    run_id: str,
-    test_metric: str,
-    scenario_idx: int,
-    metric_name: str,
-) -> tuple[float, float, float]:
-    """Extract one required per-scenario degradation metric and its CI siblings."""
-    value = require_float_metric(
-        metrics,
-        run_id=run_id,
-        metric_key=build_degradation_scenario_metric_key(
-            test_metric=test_metric,
-            scenario_idx=scenario_idx,
-            metric_name=metric_name,
-        ),
-        output_name=metric_name,
-    )
-    ci_lo = require_float_metric(
-        metrics,
-        run_id=run_id,
-        metric_key=build_degradation_scenario_metric_key(
-            test_metric=test_metric,
-            scenario_idx=scenario_idx,
-            metric_name=f"{metric_name}_CI_lo",
-        ),
-        output_name=f"{metric_name}_CI_lo",
-    )
-    ci_hi = require_float_metric(
-        metrics,
-        run_id=run_id,
-        metric_key=build_degradation_scenario_metric_key(
-            test_metric=test_metric,
-            scenario_idx=scenario_idx,
-            metric_name=f"{metric_name}_CI_hi",
-        ),
-        output_name=f"{metric_name}_CI_hi",
-    )
-    return value, ci_lo, ci_hi
 
 
 def partition_metric_bundle(

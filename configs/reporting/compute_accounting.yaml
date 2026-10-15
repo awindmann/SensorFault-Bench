@@ -1,0 +1,88 @@
+# configs/reporting/compute_accounting.yaml
+# Experiment campaigns and paper analyses for scripts/compute_accounting_ledger.py.
+
+# Each campaign lists the configs/defaults.yaml values it was run with. Keys
+# that are not listed keep their defaults.yaml values. The experiment prefixes
+# are the recorded MLflow names of the runs in paper_artifact/compute_accounting/.
+campaigns:
+  - id: reference_seed42
+    overrides:
+      MLFLOW_EXPERIMENT_PREFIX: "improv-11"
+      SEED: 42
+      DATA_SPLIT_SEED: null
+      DATA_FILES: ["BeijingAir_Tiantan", "Penmanshiel_Hourly_WT08", "ETTh1", "traffic"]
+      DATA_TARGETS: []
+
+  - id: training_seed_1001
+    overrides:
+      MLFLOW_EXPERIMENT_PREFIX: "seed-s1001"
+      SEED: 1001
+      DATA_SPLIT_SEED: 42
+      DATA_FILES: ["BeijingAir_Tiantan", "Penmanshiel_Hourly_WT08", "ETTh1", "traffic"]
+      DATA_TARGETS: []
+
+  - id: training_seed_1002
+    overrides:
+      MLFLOW_EXPERIMENT_PREFIX: "seed-s1002"
+      SEED: 1002
+      DATA_SPLIT_SEED: 42
+      DATA_FILES: ["BeijingAir_Tiantan", "Penmanshiel_Hourly_WT08", "ETTh1", "traffic"]
+      DATA_TARGETS: []
+
+  - id: etth1_all_h6
+    overrides:
+      MLFLOW_EXPERIMENT_PREFIX: "rebuttal-etth1-all-h6"
+      SEED: 42
+      DATA_SPLIT_SEED: 42
+      DATA_FILES: ["ETTh1"]
+      DATA_TARGETS: ["all"]
+      INPUT_LEN: 96
+      TARGET_LEN: 6
+      METHOD: "baseline"
+
+  - id: etth1_ot_h96
+    overrides:
+      MLFLOW_EXPERIMENT_PREFIX: "rebuttal-etth1-ot-h96"
+      SEED: 42
+      DATA_SPLIT_SEED: 42
+      DATA_FILES: ["ETTh1"]
+      DATA_TARGETS: ["ot"]
+      INPUT_LEN: 96
+      TARGET_LEN: 96
+      METHOD: "baseline"
+
+  - id: etth1_ot_h6
+    overrides:
+      MLFLOW_EXPERIMENT_PREFIX: "rebuttal-etth1-ot-h6"
+      SEED: 42
+      DATA_SPLIT_SEED: 42
+      DATA_FILES: ["ETTh1"]
+      DATA_TARGETS: ["ot"]
+      INPUT_LEN: 96
+      TARGET_LEN: 6
+      METHOD: "baseline"
+
+# A non-official evaluation episode counts when it starts in the window of an
+# analysis of its campaign. Windows are UTC, start inclusive and end exclusive,
+# and must not overlap within a campaign.
+analyses:
+  # The model that the perturbed validation selector chooses in each cell.
+  - id: selector_pressure
+    campaign: reference_seed42
+    anchor_window: ["2026-04-26T15:00:00+00:00", "2026-04-29T13:00:00+00:00"]
+  # Evaluation data seeds 0, 1, 2, and 3.
+  - id: evaluation_data_seeds
+    campaign: reference_seed42
+    anchor_window: ["2026-04-29T13:00:00+00:00", "2026-05-01T21:44:00+00:00"]
+  # Severity sampled from Beta(1,2).
+  - id: severity_weighting
+    campaign: reference_seed42
+    anchor_window: ["2026-07-24T00:00:00+00:00", "2026-07-25T12:00:00+00:00"]
+  # TimeCompress replaced by the local timing warp.
+  - id: local_timing_warp
+    campaign: reference_seed42
+    anchor_window: ["2026-07-25T12:00:00+00:00", "2026-07-26T03:30:00+00:00"]
+  # Negative Drift and Spike.
+  - id: fault_direction
+    campaign: reference_seed42
+    anchor_window: ["2026-07-26T03:30:00+00:00", "2026-07-27T00:00:00+00:00"]

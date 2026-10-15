@@ -1,20 +1,59 @@
-"""Compute-accounting ledger and full-project overhead audit.
+"""Compute accounting for the experiments of the paper.
 
-Extends summarize_benchmark_compute.py to produce:
-1. A per-run CSV ledger for official current-scope setup and testing spans.
-2. Aggregate summary CSVs by dataset, architecture, and method.
-3. A full-project overhead audit covering stale, out-of-scope, failed, killed,
-   running, and soft-deleted runs across all MLflow experiments.
+The reference record is the compute accounting of version 0.1.0: the official
+spans and the overhead audit of the reference campaign, recorded on
+2026-05-06. Every other campaign of the config is an added campaign, and the
+analyses of the config own the evaluation episodes beyond the official ones.
+One read-only pass over the experiments of the campaigns reproduces the
+reference campaign's official spans run by run and carries the reference
+overhead audit over unchanged. It writes one report:
+
+1. A per-run ledger of official training runs and official evaluations.
+2. One row per counted evaluation episode: the official episode of every
+   winner, and every other episode that starts in the window of an analysis
+   of its campaign.
+3. Aggregate summaries per campaign, and the evaluation episodes per analysis.
+4. The overhead audit: the carried-over reference rows, then the failed,
+   killed, running, and soft-deleted parent runs in the experiments of the
+   added campaigns.
+
+An official training span runs from the run's ``start_time`` to the last entry
+of the first available metric in ``ep_val_loss``, ``best_val_loss``, and
+``train_loss``. Evaluation episodes come from the metric history of
+``${TEST_METRIC}_val`` and the degradation keys required by the campaign's
+``TEST_METRIC`` and ``PERTURBATION_SCENARIOS``. Run eval-context tags are
+mutable and are not read. Every evaluation logs its own validation anchor
+before its degradation metrics, so anchor ``a_i`` opens the interval
+``(a_i, a_{i+1}]`` and the last interval is open-ended. An interval with
+entries of every required key is a complete episode, an interval with entries
+of only some required keys is an incomplete episode, and an interval without
+required-key entries is not an episode. Each winner has one official episode:
+for the reference campaign the episode whose span equals the run's span in the
+reference record, and for every added campaign the earliest complete episode.
+Every other counted episode is additional when it starts after the reference
+record's last evaluation, and prior otherwise. Every analysis window must hold
+at least one episode. Evaluation spans are lower bounds because they exclude
+model loading and artifact uploads.
+
+The campaigns read the tracking server from ``LOGDIR`` in
+``configs/defaults.yaml``, which must point at the server that holds the
+recorded runs.
 
 Read-only: does NOT call set_tag, log_metric, log_param, delete_run, or any
 rerun/mutation command.
 
-Run from the repo root, using the same MLflow prefix and tracking URI as the
-benchmark run being audited:
+Run from the repo root, with the reference record taken from the v0.1.0
+release:
 
-    python scripts/compute_accounting_ledger.py \
-        --mlflow-experiment-prefix test-1 \
-        --logdir https://<mlflow-tracking-server>
+    git show v0.1.0:evidence/compute_accounting/compute_ledger_official_runs.csv \\
+      > runs/reference_ledger.csv
+    git show v0.1.0:evidence/compute_accounting/compute_overhead_audit.csv \\
+      > runs/reference_overhead.csv
+    uv run python scripts/compute_accounting_ledger.py \\
+      --config configs/reporting/compute_accounting.yaml \\
+      --reference-ledger runs/reference_ledger.csv \\
+      --reference-overhead runs/reference_overhead.csv \\
+      --output-dir runs/compute_accounting
 """
 
 from __future__ import annotations
@@ -23,367 +62,65 @@ import argparse
 import contextlib
 import csv
 import io
+import math
 import os
 import sys
+import time
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import mlflow
+import yaml
 from mlflow.entities import ViewType
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config_loader import (
-    build_parser,
-    load_defaults,
-    load_dataset_windows,
-    parse_explicit_cli_overrides,
-)
-from data.datasets import resolve_with_defaults
+from config_loader import load_defaults
+from data.datasets import ResolvedDatasetSpec, resolve_with_defaults
 from pipelines.ranking import ALLOWED_PIPELINE_KINDS
-from pipelines.runner import (
-    create_pipeline_runner,
-    scope_policy_skip_reason_for_spec,
-)
+from pipelines.runner import create_pipeline_runner, scope_policy_skip_reason_for_spec
 from pipelines.selection import (
-    extract_recipe_defaults_for_scope,
-    is_fully_tested,
-    load_benchmark_recipe_specs_for_scope,
-    merge_recipe_defaults_for_scope,
     resolve_pipeline_tags,
+    resolve_requested_architectures,
+    resolve_requested_methods,
 )
 from pipelines.signatures import compute_data_config_signature
 from pipelines.specs import PipelineSpec
 from pipelines.training import get_tracking_uri, search_runs_all
+from run_testing import prepare_testing_entrypoint_args
 from utils.parsing import (
-    require_degradation_eval_context_tags,
+    ComputeCampaign,
+    ComputePaperAnalysis,
+    compute_campaign_cli_tokens,
+    parse_compute_accounting_config,
+    parse_duration_milliseconds,
+    parse_iso_timestamp_milliseconds,
+    parse_perturbation_scenarios,
+    parse_required_nonempty_string,
+    parse_winner_candidate_tags,
+    require_tested_param,
     resolve_dataset_window_args,
 )
 from utils.scoring import required_degradation_metric_keys
 
-# ---------------------------------------------------------------------------
-# Duration metric keys — same as summarize_benchmark_compute.py
-# ---------------------------------------------------------------------------
+# Pause between experiments to limit the load on the shared MLflow server.
+QUERY_PAUSE_SECONDS = 5
+REFERENCE_CAMPAIGN_ID = "reference_seed42"
 DURATION_METRIC_KEYS: tuple[str, ...] = ("ep_val_loss", "best_val_loss", "train_loss")
+TRAINING_CATEGORY = "training_current_scope"
+EVALUATION_CATEGORY = "testing_current_winner"
+# Overhead categories of an added campaign are "<campaign_id>_<label>".
+ATTEMPT_OVERHEAD_STATUSES = ("FAILED", "KILLED", "RUNNING")
+DELETED_OVERHEAD_LABEL = "deleted"
 
-OUTPUT_DIR = PROJECT_ROOT / "evidence" / "compute_accounting"
-
-
-def _ts_to_iso(ts_ms: int | None) -> str:
-    if ts_ms is None:
-        return ""
-    return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
-
-
-def _require_run_tag(run, key: str) -> str:
-    tags = run.data.tags or {}
-    raw_value = tags.get(key)
-    if raw_value is None or not str(raw_value).strip():
-        raise ValueError(
-            f"Run {run.info.run_id} is missing required MLflow tag '{key}'."
-        )
-    return str(raw_value).strip()
-
-
-def _safe_tag(run, key: str) -> str:
-    tags = run.data.tags or {}
-    v = tags.get(key)
-    return str(v).strip() if v is not None else ""
-
-
-def _safe_param(run, key: str) -> str:
-    params = run.data.params or {}
-    v = params.get(key)
-    return str(v).strip() if v is not None else ""
-
-
-# ---------------------------------------------------------------------------
-# Duration resolvers (identical logic to summarize_benchmark_compute.py)
-# ---------------------------------------------------------------------------
-def _resolve_run_duration_seconds(client, run) -> tuple[float, str]:
-    start = run.info.start_time
-    if start is None:
-        raise ValueError(f"Run {run.info.run_id} is missing start_time.")
-    for key in DURATION_METRIC_KEYS:
-        try:
-            history = client.get_metric_history(run.info.run_id, key)
-        except Exception:
-            continue
-        if not history:
-            continue
-        last_ts = max(h.timestamp for h in history)
-        if last_ts <= start:
-            continue
-        return (last_ts - start) / 1000.0, f"metric:{key}"
-    return float("nan"), "no_metric_evidence"
-
-
-def _resolve_run_duration_seconds_strict(client, run) -> tuple[float, str]:
-    start = run.info.start_time
-    if start is None:
-        raise ValueError(f"Run {run.info.run_id} is missing start_time.")
-    for key in DURATION_METRIC_KEYS:
-        try:
-            history = client.get_metric_history(run.info.run_id, key)
-        except Exception:
-            continue
-        if not history:
-            continue
-        last_ts = max(h.timestamp for h in history)
-        if last_ts <= start:
-            raise ValueError(
-                f"Run {run.info.run_id} metric '{key}' has no timestamp after "
-                f"start_time ({last_ts} <= {start})."
-            )
-        return (last_ts - start) / 1000.0, f"metric:{key}"
-    expected = ", ".join(DURATION_METRIC_KEYS)
-    raise ValueError(
-        f"Run {run.info.run_id} has no duration metric history. "
-        f"Expected at least one of: {expected}."
-    )
-
-
-def _resolve_wrapper_duration_seconds_strict(
-    client,
-    run,
-    *,
-    test_metric: str,
-) -> tuple[float, str]:
-    start = run.info.start_time
-    if start is None:
-        raise ValueError(f"Run {run.info.run_id} is missing start_time.")
-    metric_keys = (f"{test_metric}_val", *DURATION_METRIC_KEYS)
-    for key in metric_keys:
-        try:
-            history = client.get_metric_history(run.info.run_id, key)
-        except Exception:
-            continue
-        if not history:
-            continue
-        last_ts = max(h.timestamp for h in history)
-        if last_ts <= start:
-            raise ValueError(
-                f"Run {run.info.run_id} metric '{key}' has no timestamp after "
-                f"start_time ({last_ts} <= {start})."
-            )
-        return (last_ts - start) / 1000.0, f"metric:{key}"
-    expected = ", ".join(metric_keys)
-    raise ValueError(
-        f"Wrapper run {run.info.run_id} has no setup-duration metric history. "
-        f"Expected at least one of: {expected}."
-    )
-
-
-def _resolve_official_setup_duration_seconds_strict(
-    client,
-    run,
-    *,
-    test_metric: str,
-) -> tuple[float, str]:
-    kind = _require_run_tag(run, "pipeline_kind")
-    if kind == "train":
-        return _resolve_run_duration_seconds_strict(client, run)
-    if kind == "wrap":
-        return _resolve_wrapper_duration_seconds_strict(
-            client,
-            run,
-            test_metric=test_metric,
-        )
-    raise ValueError(
-        f"Run {run.info.run_id} has unsupported official setup pipeline_kind={kind!r}."
-    )
-
-
-def _metric_timestamps(client, run, key: str) -> list[int]:
-    try:
-        history = client.get_metric_history(run.info.run_id, key)
-    except Exception:
-        return []
-    return [int(h.timestamp) for h in history]
-
-
-def _resolve_testing_duration_seconds(client, run) -> tuple[float, str]:
-    tags = run.data.tags
-    if tags is None:
-        return float("nan"), "no_tags"
-    try:
-        eval_context = require_degradation_eval_context_tags(
-            tags, run_id=run.info.run_id,
-        )
-    except Exception:
-        return float("nan"), "no_eval_context"
-    test_metric = str(eval_context["test_metric"])
-    scenario_indices = tuple(sorted(eval_context["perturbation_idx_name_map"]))
-    terminal_keys = required_degradation_metric_keys(
-        test_metric=test_metric,
-        scenario_indices=scenario_indices,
-    )
-    terminal_timestamps_by_key: dict[str, int] = {}
-    for key in terminal_keys:
-        ts_list = _metric_timestamps(client, run, key)
-        if not ts_list:
-            return float("nan"), f"missing_metric:{key}"
-        terminal_timestamps_by_key[key] = max(ts_list)
-    end_key, end_ts = max(
-        terminal_timestamps_by_key.items(),
-        key=lambda item: (item[1], item[0]),
-    )
-    start_key = f"{test_metric}_val"
-    start_candidates = [
-        ts for ts in _metric_timestamps(client, run, start_key) if ts <= end_ts
-    ]
-    if not start_candidates:
-        return float("nan"), f"no_{start_key}_anchor"
-    start_ts = max(start_candidates)
-    if end_ts <= start_ts:
-        return float("nan"), "non_positive_span"
-    return (end_ts - start_ts) / 1000.0, f"metric:{start_key}->{end_key}"
-
-
-# ---------------------------------------------------------------------------
-# Raw-span fallback for runs without metric evidence
-# ---------------------------------------------------------------------------
-def _raw_span_seconds(run) -> tuple[float, str]:
-    start = run.info.start_time
-    end = run.info.end_time
-    if start is None:
-        return float("nan"), "no_start_time"
-    if end is None or end <= start:
-        return float("nan"), "no_end_time"
-    return (end - start) / 1000.0, "raw_span"
-
-
-# ---------------------------------------------------------------------------
-# Build args namespace (same as summarize_benchmark_compute.py)
-# ---------------------------------------------------------------------------
-def _recipe_param_defaults(extracted_defaults: list[dict[str, object]]) -> dict[str, object]:
-    defaults: dict[str, object] = {}
-    for defaults_dict in extracted_defaults:
-        defaults.update(defaults_dict)
-    return defaults
-
-
-def _build_args_namespace(
-    base_defaults: dict,
-    recipe_specs: list[PipelineSpec],
-) -> argparse.Namespace:
-    extracted_defaults = extract_recipe_defaults_for_scope(recipe_specs)
-    defaults = merge_recipe_defaults_for_scope(base_defaults, extracted_defaults)
-    parser = build_parser(defaults)
-    args = parser.parse_args()
-    args._explicit_cli_args = tuple(sys.argv[1:])
-    args._recipe_param_overrides = parse_explicit_cli_overrides(
-        _recipe_param_defaults(extracted_defaults),
-        extra_args=args._explicit_cli_args,
-    )
-    args._window_arg_overrides = parse_explicit_cli_overrides(
-        {
-            "input_len": defaults["INPUT_LEN"],
-            "target_len": defaults["TARGET_LEN"],
-            "batch_size": defaults["BATCH_SIZE"],
-        },
-        extra_args=args._explicit_cli_args,
-    )
-    return args
-
-
-def _resolve_official_setup_compute_scope_specs(
-    recipe_specs: list[PipelineSpec],
-) -> list[PipelineSpec]:
-    selected: list[PipelineSpec] = []
-    for spec in recipe_specs:
-        method = str(spec.pipeline_method).strip()
-        kind = str(spec.pipeline_kind).strip()
-        if kind in {"train", "wrap"}:
-            selected.append(spec)
-            continue
-        raise ValueError(
-            "Compute accounting supports train and wrap recipes in the public "
-            f"benchmark scope. Method '{method}' declares pipeline_kind='{kind}'."
-        )
-    return selected
-
-
-def _expected_pipeline_kinds_by_cell(
-    *,
-    scope_specs: list[PipelineSpec],
-    architectures: list[str],
-) -> dict[tuple[str, str], str]:
-    expected: dict[tuple[str, str], str] = {}
-    for spec in scope_specs:
-        method = str(spec.pipeline_method).strip()
-        kind = str(spec.pipeline_kind).strip()
-        for arch in architectures:
-            policy_skip = scope_policy_skip_reason_for_spec(spec, arch)
-            if policy_skip is not None:
-                continue
-            expected[(arch, method)] = kind
-    return expected
-
-
-def _resolve_testing_compute_scope_specs(
-    recipe_specs: list[PipelineSpec],
-) -> list[PipelineSpec]:
-    selected: list[PipelineSpec] = []
-    for spec in recipe_specs:
-        method = str(spec.pipeline_method).strip()
-        kind = str(spec.pipeline_kind).strip()
-        if kind in ALLOWED_PIPELINE_KINDS:
-            selected.append(spec)
-            continue
-        allowed = ", ".join(ALLOWED_PIPELINE_KINDS)
-        raise ValueError(
-            f"Method '{method}' declares pipeline_kind='{kind}'. "
-            f"Allowed kinds: {allowed}."
-        )
-    return selected
-
-
-def _resolve_scope_signatures(
-    *,
-    client,
-    experiment_id: str,
-    dataset_spec,
-    ds_args,
-    scope_specs: list[PipelineSpec],
-    architectures: list[str],
-    data_sig: str,
-) -> set[str]:
-    all_signatures: set[str] = set()
-    for spec in scope_specs:
-        method = str(spec.pipeline_method).strip()
-        for arch in architectures:
-            policy_skip = scope_policy_skip_reason_for_spec(spec, arch)
-            if policy_skip is not None:
-                continue
-            runner = create_pipeline_runner(spec, ds_args)
-            try:
-                with contextlib.redirect_stdout(io.StringIO()), \
-                        contextlib.redirect_stderr(io.StringIO()):
-                    scope = runner.expected_tuning_scope(
-                        client=client,
-                        experiment_id=experiment_id,
-                        dataset_spec=dataset_spec,
-                        architecture=arch,
-                        data_config_signature=data_sig,
-                    )
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Could not resolve expected tuning scope for "
-                    f"dataset='{dataset_spec.key}', architecture='{arch}', "
-                    f"pipeline_method='{method}'."
-                ) from exc
-            all_signatures.update(scope.signature_set)
-    return all_signatures
-
-
-# ---------------------------------------------------------------------------
-# Ledger row builder
-# ---------------------------------------------------------------------------
 LEDGER_FIELDS = [
+    "campaign_id",
     "run_id",
     "experiment_name",
     "dataset",
@@ -405,47 +142,22 @@ LEDGER_FIELDS = [
     "tested",
     "ledger_category",
 ]
-
-
-def _build_ledger_row(
-    run,
-    *,
-    experiment_name: str,
-    dataset_key: str,
-    duration_seconds: float,
-    duration_source: str,
-    tested: bool,
-    ledger_category: str,
-) -> dict:
-    import math
-    hours = duration_seconds / 3600.0 if not math.isnan(duration_seconds) else ""
-    return {
-        "run_id": run.info.run_id,
-        "experiment_name": experiment_name,
-        "dataset": dataset_key,
-        "model_architecture": _safe_tag(run, "model_architecture"),
-        "pipeline_method": _safe_tag(run, "pipeline_method"),
-        "pipeline_id": _safe_tag(run, "pipeline_id"),
-        "pipeline_kind": _safe_tag(run, "pipeline_kind"),
-        "status": run.info.status,
-        "lifecycle_stage": run.info.lifecycle_stage,
-        "start_time_iso": _ts_to_iso(run.info.start_time),
-        "end_time_iso": _ts_to_iso(run.info.end_time),
-        "evidence_duration_seconds": duration_seconds if not math.isnan(duration_seconds) else "",
-        "evidence_duration_hours": f"{hours:.6f}" if isinstance(hours, float) else "",
-        "duration_source": duration_source,
-        "data_config_signature": _safe_tag(run, "data_config_signature"),
-        "signature": _safe_tag(run, "signature"),
-        "best_model": _safe_tag(run, "best_model"),
-        "backbone_current": _safe_tag(run, "backbone_current"),
-        "tested": str(tested).lower(),
-        "ledger_category": ledger_category,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Overhead audit helpers
-# ---------------------------------------------------------------------------
+EPISODE_FIELDS = [
+    "campaign_id",
+    "run_id",
+    "dataset",
+    "model_architecture",
+    "pipeline_method",
+    "is_winner",
+    "episode_index",
+    "anchor_time_iso",
+    "end_time_iso",
+    "span_seconds",
+    "episode_class",
+    "complete",
+    "analysis",
+]
+AGGREGATE_FIELDS = ["campaign_id", "group", "key", "runs", "hours"]
 OVERHEAD_FIELDS = [
     "run_id",
     "experiment_name",
@@ -464,21 +176,730 @@ OVERHEAD_FIELDS = [
     "duration_source",
     "overhead_category",
 ]
+LEDGER_AGGREGATE_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("training_by_dataset", TRAINING_CATEGORY, ("dataset",)),
+    ("training_by_architecture", TRAINING_CATEGORY, ("model_architecture",)),
+    ("training_by_method", TRAINING_CATEGORY, ("pipeline_method",)),
+    (
+        "training_by_dataset_architecture",
+        TRAINING_CATEGORY,
+        ("dataset", "model_architecture"),
+    ),
+    ("training_by_dataset_method", TRAINING_CATEGORY, ("dataset", "pipeline_method")),
+    ("testing_by_dataset", EVALUATION_CATEGORY, ("dataset",)),
+    ("testing_by_method", EVALUATION_CATEGORY, ("pipeline_method",)),
+)
+ANALYSIS_AGGREGATE_GROUP = "evaluations_by_analysis"
 
 
-def _build_overhead_row(
+@dataclass(frozen=True)
+class _CampaignDataset:
+    spec: ResolvedDatasetSpec
+    args: argparse.Namespace
+    data_config_signature: str
+    experiment_name: str
+
+
+@dataclass(frozen=True)
+class _Campaign:
+    campaign_id: str
+    experiment_prefix: str
+    architectures: tuple[str, ...]
+    training_specs: tuple[PipelineSpec, ...]
+    expected_cells: dict[tuple[str, str], str]
+    anchor_key: str
+    required_keys: tuple[str, ...]
+    datasets: tuple[_CampaignDataset, ...]
+
+
+@dataclass(frozen=True)
+class _ReferenceRecord:
+    training_ms: dict[str, int]
+    evaluation_ms: dict[str, int]
+    evaluation_end_ms: int
+    overhead_rows: list[dict]
+
+
+@dataclass(frozen=True)
+class _Episode:
+    anchor_ms: int
+    end_ms: int
+    end_key: str
+    complete: bool
+
+    @property
+    def span_ms(self) -> int:
+        return self.end_ms - self.anchor_ms
+
+
+def _ts_to_iso(ts_ms: int | None) -> str:
+    if ts_ms is None:
+        return ""
+    return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
+
+
+def _require_run_tag(run, key: str) -> str:
+    tags = run.data.tags or {}
+    raw_value = tags.get(key)
+    if raw_value is None or not str(raw_value).strip():
+        raise ValueError(f"Run {run.info.run_id} is missing required MLflow tag '{key}'.")
+    return str(raw_value).strip()
+
+
+def _safe_tag(run, key: str) -> str:
+    """Best-effort tag read, restricted to overhead rows."""
+    value = run.data.tags.get(key)
+    return str(value).strip() if value is not None else ""
+
+
+def _hours(seconds: Sequence[float]) -> float:
+    return math.fsum(seconds) / 3600.0
+
+
+# ---------------------------------------------------------------------------
+# Campaign resolution
+# ---------------------------------------------------------------------------
+def _select_training_compute_scope_specs(
+    specs: Sequence[PipelineSpec],
+) -> list[PipelineSpec]:
+    """Return the train-kind recipes. Wrap recipes add no training span."""
+    selected: list[PipelineSpec] = []
+    seen_methods: set[str] = set()
+    for spec in specs:
+        method = str(spec.pipeline_method).strip()
+        if method in seen_methods:
+            raise ValueError(f"Duplicate configured pipeline_method '{method}'.")
+        seen_methods.add(method)
+        kind = str(spec.pipeline_kind).strip()
+        if kind == "wrap":
+            continue
+        if kind != "train":
+            raise ValueError(
+                "Training compute accounting supports train and wrap recipes, but "
+                f"method '{method}' has pipeline_kind='{kind}'."
+            )
+        selected.append(spec)
+    if not selected:
+        raise ValueError("No train-kind recipes remain in the training compute scope.")
+    return selected
+
+
+def _resolve_testing_expected_kinds(
+    *,
+    scope_specs: Sequence[PipelineSpec],
+    architectures: Sequence[str],
+) -> dict[tuple[str, str], str]:
+    """Map every applicable (architecture, method) cell to its pipeline kind."""
+    expected_kinds: dict[tuple[str, str], str] = {}
+    for spec in scope_specs:
+        method = str(spec.pipeline_method).strip()
+        if not method:
+            raise ValueError("Configured pipeline spec is missing pipeline_method.")
+        kind = str(spec.pipeline_kind).strip()
+        if kind not in ALLOWED_PIPELINE_KINDS:
+            raise ValueError(
+                f"Configured pipeline method '{method}' has unknown pipeline_kind '{kind}'."
+            )
+        for arch in architectures:
+            if scope_policy_skip_reason_for_spec(spec, arch) is None:
+                expected_kinds[(arch, method)] = kind
+    if not expected_kinds:
+        raise RuntimeError("Expected testing scope is empty after policy skips.")
+    return expected_kinds
+
+
+def _resolve_campaign(campaign: ComputeCampaign, *, defaults: dict) -> _Campaign:
+    """Resolve one campaign through the testing entry point's argument path."""
+    tokens = compute_campaign_cli_tokens(campaign.overrides, defaults=defaults)
+    args, recipe_specs, dataset_window_defaults = prepare_testing_entrypoint_args(
+        cli_args=tokens
+    )
+    methods = resolve_requested_methods(
+        args,
+        configured_methods=tuple(spec.pipeline_method for spec in recipe_specs),
+    )
+    scope_specs = [spec for spec in recipe_specs if spec.pipeline_method in methods]
+    architectures = resolve_requested_architectures(args)
+    test_metric = parse_required_nonempty_string(args.test_metric, key="TEST_METRIC")
+    scenarios = parse_perturbation_scenarios(
+        args.perturbation_scenarios,
+        key="PERTURBATION_SCENARIOS",
+    )
+    dataset_specs = resolve_with_defaults(
+        datasets=args.data_files,
+        targets=args.data_targets,
+        data_root=args.data_root,
+    )
+    datasets = []
+    for data_file, dataset_spec in zip(args.data_files, dataset_specs, strict=True):
+        if dataset_spec.key != data_file:
+            raise ValueError(
+                f"Compute campaign '{campaign.campaign_id}' must name dataset "
+                f"'{dataset_spec.key}' by its registered key, got '{data_file}'."
+            )
+        dataset_args = resolve_dataset_window_args(
+            args,
+            dataset_spec=dataset_spec,
+            dataset_window_defaults=dataset_window_defaults,
+            explicit_arg_overrides=args._window_arg_overrides,
+        )
+        datasets.append(_CampaignDataset(
+            spec=dataset_spec,
+            args=dataset_args,
+            data_config_signature=compute_data_config_signature(
+                dataset_spec=dataset_spec,
+                args=dataset_args,
+            ),
+            experiment_name=f"{args.mlflow_experiment_prefix}-{dataset_spec.key}",
+        ))
+    return _Campaign(
+        campaign_id=campaign.campaign_id,
+        experiment_prefix=args.mlflow_experiment_prefix,
+        architectures=tuple(architectures),
+        training_specs=tuple(_select_training_compute_scope_specs(scope_specs)),
+        expected_cells=_resolve_testing_expected_kinds(
+            scope_specs=scope_specs,
+            architectures=architectures,
+        ),
+        anchor_key=f"{test_metric}_val",
+        required_keys=required_degradation_metric_keys(
+            test_metric=test_metric,
+            scenario_indices=range(len(scenarios)),
+        ),
+        datasets=tuple(datasets),
+    )
+
+
+def _load_reference_record(ledger_path: Path, overhead_path: Path) -> _ReferenceRecord:
+    """Load the official spans and overhead rows of the reference record.
+
+    The record ends when its last official evaluation run ended. Episodes that
+    start later are added compute.
+    """
+    spans: dict[str, dict[str, int]] = {TRAINING_CATEGORY: {}, EVALUATION_CATEGORY: {}}
+    evaluation_ends: list[int] = []
+    with open(ledger_path, newline="") as handle:
+        for row in csv.DictReader(handle):
+            run_id = row["run_id"]
+            category = row["ledger_category"]
+            if category not in spans:
+                raise ValueError(
+                    f"{ledger_path} has unknown ledger_category '{category}' for run "
+                    f"{run_id}."
+                )
+            if run_id in spans[category]:
+                raise ValueError(
+                    f"{ledger_path} has duplicate {category} rows for run {run_id}."
+                )
+            spans[category][run_id] = parse_duration_milliseconds(
+                row["evidence_duration_seconds"],
+                key=f"{ledger_path} run {run_id} evidence_duration_seconds",
+            )
+            if category == EVALUATION_CATEGORY:
+                evaluation_ends.append(parse_iso_timestamp_milliseconds(
+                    row["end_time_iso"],
+                    key=f"{ledger_path} run {run_id} end_time_iso",
+                ))
+    if not evaluation_ends:
+        raise ValueError(f"{ledger_path} has no {EVALUATION_CATEGORY} rows.")
+    with open(overhead_path, newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != OVERHEAD_FIELDS:
+            raise ValueError(
+                f"{overhead_path} has columns {reader.fieldnames}, expected "
+                f"{OVERHEAD_FIELDS}."
+            )
+        overhead_rows = [
+            {
+                **row,
+                "evidence_duration_seconds": parse_duration_milliseconds(
+                    row["evidence_duration_seconds"],
+                    key=f"{overhead_path} run {row['run_id']} evidence_duration_seconds",
+                ) / 1000.0,
+            }
+            for row in reader
+        ]
+    return _ReferenceRecord(
+        training_ms=spans[TRAINING_CATEGORY],
+        evaluation_ms=spans[EVALUATION_CATEGORY],
+        evaluation_end_ms=max(evaluation_ends),
+        overhead_rows=overhead_rows,
+    )
+
+
+# ---------------------------------------------------------------------------
+# MLflow reads
+# ---------------------------------------------------------------------------
+def _query_parent_runs(
+    client,
+    experiment_id: str,
+    filter_string: str | None,
+    *,
+    view_type=ViewType.ACTIVE_ONLY,
+) -> list:
+    runs = search_runs_all(
+        client,
+        [experiment_id],
+        filter_string=filter_string,
+        run_view_type=view_type,
+    )
+    return [run for run in runs if not run.data.tags.get("mlflow.parentRunId")]
+
+
+def _history_timestamps(client, run_id: str, key: str) -> list[int]:
+    return [int(entry.timestamp) for entry in client.get_metric_history(run_id, key)]
+
+
+def _resolve_run_duration_seconds(client, run) -> tuple[float, str]:
+    """Return the span from ``start_time`` to the last duration-metric entry.
+
+    The metric timestamps bound the training work more tightly than
+    ``end_time``, which a lingering process can move later.
+    """
+    start = run.info.start_time
+    if start is None:
+        raise ValueError(f"Run {run.info.run_id} is missing start_time.")
+    for key in DURATION_METRIC_KEYS:
+        timestamps = _history_timestamps(client, run.info.run_id, key)
+        if not timestamps:
+            continue
+        last_ts = max(timestamps)
+        if last_ts <= start:
+            raise ValueError(
+                f"Run {run.info.run_id} metric '{key}' has no timestamp after "
+                f"start_time ({last_ts} <= {start})."
+            )
+        return (last_ts - start) / 1000.0, f"metric:{key}"
+    raise ValueError(
+        f"Run {run.info.run_id} has no duration metric history. "
+        f"Expected at least one of: {', '.join(DURATION_METRIC_KEYS)}."
+    )
+
+
+def _resolve_scope_signatures(
+    *,
+    client,
+    experiment_id: str,
+    dataset_spec,
+    ds_args,
+    scope_specs: Sequence[PipelineSpec],
+    architectures: Sequence[str],
+    data_sig: str,
+) -> set[str]:
+    """Return the tuning signatures of the expected training scope."""
+    signatures: set[str] = set()
+    for spec in scope_specs:
+        method = str(spec.pipeline_method).strip()
+        for arch in architectures:
+            if scope_policy_skip_reason_for_spec(spec, arch) is not None:
+                continue
+            runner = create_pipeline_runner(spec, ds_args)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    scope = runner.expected_tuning_scope(
+                        client=client,
+                        experiment_id=experiment_id,
+                        dataset_spec=dataset_spec,
+                        architecture=arch,
+                        data_config_signature=data_sig,
+                    )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Could not resolve expected tuning scope for "
+                    f"dataset='{dataset_spec.key}', architecture='{arch}', "
+                    f"pipeline_method='{method}'."
+                ) from exc
+            signatures.update(scope.signature_set)
+    return signatures
+
+
+def _query_finished_train_runs(
+    *,
+    client,
+    experiment_id: str,
+    architectures: Sequence[str],
+    scope_methods: Sequence[str],
+    data_sig: str,
+) -> list:
+    filter_string = (
+        "attribute.status = 'FINISHED' "
+        "AND tags.pipeline_kind = 'train' "
+        f"AND tags.data_config_signature = '{data_sig}'"
+    )
+    runs = _query_parent_runs(client, experiment_id, filter_string)
+    filtered = []
+    for run in runs:
+        architecture = _require_run_tag(run, "model_architecture")
+        method = _require_run_tag(run, "pipeline_method")
+        if architecture not in architectures or method not in scope_methods:
+            continue
+        _require_run_tag(run, "signature")
+        filtered.append(run)
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Official rows
+# ---------------------------------------------------------------------------
+def _ledger_row(
+    run,
+    *,
+    campaign_id: str,
+    dataset: _CampaignDataset,
+    seconds: float,
+    duration_source: str,
+    ledger_category: str,
+) -> dict:
+    run_id = run.info.run_id
+    pipeline_kind = _require_run_tag(run, "pipeline_kind")
+    winner_tags = parse_winner_candidate_tags(run.data.tags, run_id=run_id)
+    return {
+        "campaign_id": campaign_id,
+        "run_id": run_id,
+        "experiment_name": dataset.experiment_name,
+        "dataset": dataset.spec.key,
+        "model_architecture": _require_run_tag(run, "model_architecture"),
+        "pipeline_method": _require_run_tag(run, "pipeline_method"),
+        "pipeline_id": _require_run_tag(run, "pipeline_id"),
+        "pipeline_kind": pipeline_kind,
+        "status": run.info.status,
+        "lifecycle_stage": run.info.lifecycle_stage,
+        "start_time_iso": _ts_to_iso(run.info.start_time),
+        "end_time_iso": _ts_to_iso(run.info.end_time),
+        "evidence_duration_seconds": seconds,
+        "evidence_duration_hours": f"{seconds / 3600.0:.6f}",
+        "duration_source": duration_source,
+        "data_config_signature": _require_run_tag(run, "data_config_signature"),
+        # Wrap runs are not tuned, so they carry no tuning signature.
+        "signature": "" if pipeline_kind == "wrap" else _require_run_tag(run, "signature"),
+        "best_model": "" if winner_tags is None else str(winner_tags[0]).lower(),
+        "backbone_current": "" if winner_tags is None else str(winner_tags[1]).lower(),
+        "tested": str(winner_tags == (True, True)).lower(),
+        "ledger_category": ledger_category,
+    }
+
+
+def _training_rows(
+    client,
+    campaign: _Campaign,
+    dataset: _CampaignDataset,
+    *,
+    experiment_id: str,
+) -> list[dict]:
+    """Return the official training rows of one campaign experiment."""
+    scope_signatures = _resolve_scope_signatures(
+        client=client,
+        experiment_id=experiment_id,
+        dataset_spec=dataset.spec,
+        ds_args=dataset.args,
+        scope_specs=campaign.training_specs,
+        architectures=campaign.architectures,
+        data_sig=dataset.data_config_signature,
+    )
+    finished_runs = _query_finished_train_runs(
+        client=client,
+        experiment_id=experiment_id,
+        architectures=campaign.architectures,
+        scope_methods=tuple(spec.pipeline_method for spec in campaign.training_specs),
+        data_sig=dataset.data_config_signature,
+    )
+    ledger_rows: list[dict] = []
+    for run in finished_runs:
+        if _require_run_tag(run, "signature") not in scope_signatures:
+            continue
+        seconds, source = _resolve_run_duration_seconds(client, run)
+        ledger_rows.append(_ledger_row(
+            run,
+            campaign_id=campaign.campaign_id,
+            dataset=dataset,
+            seconds=seconds,
+            duration_source=source,
+            ledger_category=TRAINING_CATEGORY,
+        ))
+    if not ledger_rows:
+        raise RuntimeError(
+            f"No current-scope finished parent train runs in '{dataset.experiment_name}'."
+        )
+    return ledger_rows
+
+
+def _select_winners(
+    runs: Sequence,
+    *,
+    expected_cells: Mapping[tuple[str, str], str],
+) -> dict[tuple[str, str], Any]:
+    """Map each expected testing cell to its tagged winner. Winners are never re-ranked."""
+    winners: dict[tuple[str, str], Any] = {}
+    for run in runs:
+        run_id = run.info.run_id
+        tags = run.data.tags
+        if parse_winner_candidate_tags(tags, run_id=run_id) != (True, True):
+            raise ValueError(
+                f"Run {run_id} from the best_model=true query is not tagged "
+                "best_model=true and backbone_current=true."
+            )
+        if not require_tested_param(run.data.params, run_id=run_id):
+            raise ValueError(f"Winner run {run_id} has tested=false.")
+        resolved = resolve_pipeline_tags(tags, run_id=run_id)
+        cell = (_require_run_tag(run, "model_architecture"), resolved["pipeline_method"])
+        if cell not in expected_cells:
+            raise RuntimeError(
+                f"Winner run {run_id} is outside the expected testing cells: {cell}."
+            )
+        if resolved["pipeline_kind"] != expected_cells[cell]:
+            raise RuntimeError(
+                f"Winner run {run_id} for testing cell {cell} has pipeline_kind="
+                f"'{resolved['pipeline_kind']}', expected '{expected_cells[cell]}'."
+            )
+        if cell in winners:
+            raise RuntimeError(
+                f"Testing cell {cell} has two winners: "
+                f"{winners[cell].info.run_id} and {run_id}."
+            )
+        winners[cell] = run
+    missing = sorted(set(expected_cells) - set(winners))
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} expected testing cell(s) have no winner: {missing}."
+        )
+    return winners
+
+
+def _split_evaluation_episodes(
+    *,
+    run_id: str,
+    anchors: Sequence[int],
+    required_entries: Mapping[str, Sequence[int]],
+) -> list[_Episode]:
+    """Split required-key history into episodes at the validation anchors."""
+    anchor_times = sorted(set(anchors))
+    entries = sorted(
+        (timestamp, key)
+        for key, timestamps in required_entries.items()
+        for timestamp in timestamps
+    )
+    if entries and (not anchor_times or entries[0][0] <= anchor_times[0]):
+        timestamp, key = entries[0]
+        raise ValueError(
+            f"Run {run_id} has required metric '{key}' at {timestamp}, at or before "
+            "its first evaluation anchor."
+        )
+    episodes = []
+    for anchor, upper in zip(anchor_times, [*anchor_times[1:], None]):
+        inside = [
+            entry for entry in entries
+            if entry[0] > anchor and (upper is None or entry[0] <= upper)
+        ]
+        if not inside:
+            continue
+        end_ms, end_key = max(inside)
+        episodes.append(_Episode(
+            anchor_ms=anchor,
+            end_ms=end_ms,
+            end_key=end_key,
+            complete={key for _, key in inside} == set(required_entries),
+        ))
+    return episodes
+
+
+def _evaluation_episodes(client, run_id: str, campaign: _Campaign) -> list[_Episode]:
+    return _split_evaluation_episodes(
+        run_id=run_id,
+        anchors=_history_timestamps(client, run_id, campaign.anchor_key),
+        required_entries={
+            key: _history_timestamps(client, run_id, key)
+            for key in campaign.required_keys
+        },
+    )
+
+
+def _select_official_episode(
+    episodes: Sequence[_Episode],
+    *,
+    run_id: str,
+    reference_ms: int | None,
+) -> _Episode:
+    """Return the complete episode spanning ``reference_ms``, else the earliest one."""
+    complete = [episode for episode in episodes if episode.complete]
+    if reference_ms is None:
+        if not complete:
+            raise RuntimeError(f"Winner run {run_id} has no complete evaluation episode.")
+        return complete[0]
+    matches = [episode for episode in complete if episode.span_ms == reference_ms]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Reference winner run {run_id} has {len(matches)} complete evaluation "
+            f"episodes spanning the recorded {reference_ms} ms, expected exactly one."
+        )
+    return matches[0]
+
+
+def _evaluation_rows(
+    client,
+    campaign: _Campaign,
+    dataset: _CampaignDataset,
+    *,
+    experiment_id: str,
+    reference_evaluation_ms: Mapping[str, int] | None,
+    record_end_ms: int,
+    analyses: Sequence[ComputePaperAnalysis],
+) -> tuple[list[dict], list[dict]]:
+    """Return official evaluation rows and the counted episode rows of every tested run.
+
+    A non-official episode counts when it starts in the window of one of the
+    campaign's ``analyses``. It is additional when it starts after the
+    reference record ends at ``record_end_ms``, and prior otherwise.
+    """
+    scope_filter = (
+        "attribute.status = 'FINISHED' "
+        f"AND tags.data_config_signature = '{dataset.data_config_signature}'"
+    )
+    winners = _select_winners(
+        _query_parent_runs(
+            client,
+            experiment_id,
+            f"{scope_filter} AND tags.best_model = 'true'",
+        ),
+        expected_cells=campaign.expected_cells,
+    )
+    winner_ids = {run.info.run_id for run in winners.values()}
+    tested_runs = _query_parent_runs(
+        client,
+        experiment_id,
+        f"{scope_filter} AND params.tested = 'true'",
+    )
+    untested = sorted(winner_ids - {run.info.run_id for run in tested_runs})
+    if untested:
+        raise RuntimeError(
+            f"Winner run(s) missing from the params.tested query: {untested}."
+        )
+    ledger_rows: list[dict] = []
+    episode_rows: list[dict] = []
+    for run in tested_runs:
+        run_id = run.info.run_id
+        architecture = _require_run_tag(run, "model_architecture")
+        pipeline_method = _require_run_tag(run, "pipeline_method")
+        is_winner = run_id in winner_ids
+        episodes = _evaluation_episodes(client, run_id, campaign)
+        official = None
+        if is_winner:
+            reference_ms = None
+            if reference_evaluation_ms is not None:
+                if run_id not in reference_evaluation_ms:
+                    raise RuntimeError(
+                        f"Reference winner run {run_id} has no {EVALUATION_CATEGORY} "
+                        "row in the reference ledger."
+                    )
+                reference_ms = reference_evaluation_ms[run_id]
+            official = _select_official_episode(
+                episodes,
+                run_id=run_id,
+                reference_ms=reference_ms,
+            )
+            ledger_rows.append(_ledger_row(
+                run,
+                campaign_id=campaign.campaign_id,
+                dataset=dataset,
+                seconds=official.span_ms / 1000.0,
+                duration_source=f"metric:{campaign.anchor_key}->{official.end_key}",
+                ledger_category=EVALUATION_CATEGORY,
+            ))
+        for index, episode in enumerate(episodes):
+            if episode is official:
+                episode_class, analysis_id = "official", ""
+            else:
+                # Windows of one campaign do not overlap, so at most one matches.
+                matching = [
+                    analysis.analysis_id for analysis in analyses
+                    if analysis.window_start_ms <= episode.anchor_ms < analysis.window_end_ms
+                ]
+                if not matching:
+                    continue
+                (analysis_id,) = matching
+                episode_class = "additional" if episode.anchor_ms > record_end_ms else "prior"
+            episode_rows.append({
+                "campaign_id": campaign.campaign_id,
+                "run_id": run_id,
+                "dataset": dataset.spec.key,
+                "model_architecture": architecture,
+                "pipeline_method": pipeline_method,
+                "is_winner": str(is_winner).lower(),
+                "episode_index": index,
+                "anchor_time_iso": _ts_to_iso(episode.anchor_ms),
+                "end_time_iso": _ts_to_iso(episode.end_ms),
+                "span_seconds": episode.span_ms / 1000.0,
+                "episode_class": episode_class,
+                "complete": str(episode.complete).lower(),
+                "analysis": analysis_id,
+            })
+    return ledger_rows, episode_rows
+
+
+def _check_reference_reproduction(
+    rows: Sequence[dict],
+    *,
+    training_ms: Mapping[str, int],
+    evaluation_ms: Mapping[str, int],
+) -> None:
+    """Require the reference campaign to reproduce the reference record run by run."""
+    for category, expected in (
+        (TRAINING_CATEGORY, training_ms),
+        (EVALUATION_CATEGORY, evaluation_ms),
+    ):
+        recomputed = {
+            row["run_id"]: parse_duration_milliseconds(
+                row["evidence_duration_seconds"],
+                key=f"run {row['run_id']} evidence_duration_seconds",
+            )
+            for row in rows
+            if row["ledger_category"] == category
+        }
+        missing = sorted(set(expected) - set(recomputed))
+        extra = sorted(set(recomputed) - set(expected))
+        changed = sorted(
+            run_id for run_id in set(expected) & set(recomputed)
+            if expected[run_id] != recomputed[run_id]
+        )
+        if missing or extra or changed:
+            raise RuntimeError(
+                f"Campaign '{REFERENCE_CAMPAIGN_ID}' does not reproduce the {category} "
+                f"rows of the reference ledger: {len(missing)} missing, "
+                f"{len(extra)} extra, {len(changed)} with changed durations. "
+                f"First missing {missing[:5]}, extra {extra[:5]}, changed {changed[:5]}."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Overhead rows (best-effort durations, labeled per row)
+# ---------------------------------------------------------------------------
+def _overhead_metric_evidence(client, run) -> tuple[float, str] | None:
+    """Return the first duration metric that ends after ``start_time``."""
+    start = run.info.start_time
+    if start is None:
+        raise ValueError(f"Run {run.info.run_id} is missing start_time.")
+    for key in DURATION_METRIC_KEYS:
+        timestamps = _history_timestamps(client, run.info.run_id, key)
+        if timestamps and max(timestamps) > start:
+            return (max(timestamps) - start) / 1000.0, f"metric:{key}"
+    return None
+
+
+def _overhead_row(
+    client,
     run,
     *,
     experiment_name: str,
     experiment_prefix: str,
     dataset_key: str,
-    duration_seconds: float,
-    duration_source: str,
     overhead_category: str,
 ) -> dict:
-    import math
-    hours = duration_seconds / 3600.0 if not math.isnan(duration_seconds) else ""
-    is_child = bool(_safe_tag(run, "mlflow.parentRunId"))
+    """Build an overhead row from metric evidence, then the raw MLflow span."""
+    evidence = _overhead_metric_evidence(client, run)
+    start, end = run.info.start_time, run.info.end_time
+    if evidence is None and end is not None and end > start:
+        evidence = (end - start) / 1000.0, "raw_span"
+    seconds, source = (None, "no_evidence") if evidence is None else evidence
     return {
         "run_id": run.info.run_id,
         "experiment_name": experiment_name,
@@ -489,552 +910,428 @@ def _build_overhead_row(
         "pipeline_kind": _safe_tag(run, "pipeline_kind"),
         "status": run.info.status,
         "lifecycle_stage": run.info.lifecycle_stage,
-        "is_child_run": str(is_child).lower(),
-        "start_time_iso": _ts_to_iso(run.info.start_time),
-        "end_time_iso": _ts_to_iso(run.info.end_time),
-        "evidence_duration_seconds": duration_seconds if not math.isnan(duration_seconds) else "",
-        "evidence_duration_hours": f"{hours:.6f}" if isinstance(hours, float) else "",
-        "duration_source": duration_source,
+        "is_child_run": str(bool(_safe_tag(run, "mlflow.parentRunId"))).lower(),
+        "start_time_iso": _ts_to_iso(start),
+        "end_time_iso": _ts_to_iso(end),
+        "evidence_duration_seconds": "" if seconds is None else seconds,
+        "evidence_duration_hours": "" if seconds is None else f"{seconds / 3600.0:.6f}",
+        "duration_source": source,
         "overhead_category": overhead_category,
     }
 
 
-def _best_effort_duration(client, run) -> tuple[float, str]:
-    dur, src = _resolve_run_duration_seconds(client, run)
-    import math
-    if not math.isnan(dur):
-        return dur, src
-    return _raw_span_seconds(run)
+def _campaign_overhead_rows(
+    client,
+    campaign: _Campaign,
+    dataset: _CampaignDataset,
+    *,
+    experiment_id: str,
+) -> list[dict]:
+    """Return the overhead rows of one experiment of an added campaign.
+
+    The rows are the failed, killed, running, and soft-deleted parent runs.
+    """
+    labeled_runs = []
+    for status in ATTEMPT_OVERHEAD_STATUSES:
+        labeled_runs.extend(
+            (run, status.lower())
+            for run in _query_parent_runs(
+                client,
+                experiment_id,
+                f"attribute.status = '{status}'",
+                view_type=ViewType.ACTIVE_ONLY,
+            )
+        )
+    labeled_runs.extend(
+        (run, DELETED_OVERHEAD_LABEL)
+        for run in _query_parent_runs(
+            client,
+            experiment_id,
+            None,
+            view_type=ViewType.DELETED_ONLY,
+        )
+    )
+    return [
+        _overhead_row(
+            client,
+            run,
+            experiment_name=dataset.experiment_name,
+            experiment_prefix=campaign.experiment_prefix,
+            dataset_key=dataset.spec.key,
+            overhead_category=f"{campaign.campaign_id}_{label}",
+        )
+        for run, label in labeled_runs
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Aggregates, outputs, and totals
+# ---------------------------------------------------------------------------
+def _seconds(rows: Sequence[dict], field: str, **match: str) -> list[float]:
+    """Return ``field`` of every row whose columns equal ``match``."""
+    return [
+        row[field] for row in rows
+        if all(row[column] == value for column, value in match.items())
+    ]
+
+
+def _print_banner(title: str) -> None:
+    print("\n" + "=" * 78)
+    print(title)
+    print("=" * 78)
+
+
+def _aggregate_row(campaign_id: str, group: str, key: str, seconds: list[float]) -> dict:
+    return {
+        "campaign_id": campaign_id,
+        "group": group,
+        "key": key,
+        "runs": len(seconds),
+        "hours": f"{_hours(seconds):.2f}",
+    }
+
+
+def _aggregate_rows(
+    campaign_ids: Sequence[str],
+    ledger_rows: Sequence[dict],
+    episode_rows: Sequence[dict],
+    analyses: Sequence[ComputePaperAnalysis],
+) -> list[dict]:
+    rows: list[dict] = []
+    for campaign_id in campaign_ids:
+        for group, category, fields in LEDGER_AGGREGATE_GROUPS:
+            totals: dict[str, list[float]] = defaultdict(list)
+            for row in ledger_rows:
+                if row["campaign_id"] == campaign_id and row["ledger_category"] == category:
+                    key = "/".join(row[field] for field in fields)
+                    totals[key].append(row["evidence_duration_seconds"])
+            rows.extend(
+                _aggregate_row(campaign_id, group, key, seconds)
+                for key, seconds in sorted(totals.items())
+            )
+        rows.extend(
+            _aggregate_row(
+                campaign_id,
+                ANALYSIS_AGGREGATE_GROUP,
+                analysis.analysis_id,
+                _seconds(episode_rows, "span_seconds", analysis=analysis.analysis_id),
+            )
+            for analysis in analyses
+            if analysis.campaign_id == campaign_id
+        )
+    return rows
+
+
+def _write_csv(path: Path, fieldnames: Sequence[str], rows: Sequence[dict]) -> None:
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  {path} ({len(rows)} rows)")
+
+
+def _write_outputs(
+    output_dir: Path,
+    *,
+    ledger_rows: Sequence[dict],
+    episode_rows: Sequence[dict],
+    aggregate_rows: Sequence[dict],
+    overhead_rows: Sequence[dict],
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=False)
+    _write_csv(
+        output_dir / "compute_ledger_official_runs.csv",
+        LEDGER_FIELDS,
+        sorted(ledger_rows, key=lambda row: (
+            row["campaign_id"], row["dataset"], row["ledger_category"],
+            row["model_architecture"], row["pipeline_method"],
+            row["start_time_iso"], row["run_id"],
+        )),
+    )
+    _write_csv(
+        output_dir / "compute_evaluation_episodes.csv",
+        EPISODE_FIELDS,
+        sorted(episode_rows, key=lambda row: (
+            row["campaign_id"], row["dataset"], row["run_id"], row["episode_index"],
+        )),
+    )
+    _write_csv(output_dir / "compute_aggregates.csv", AGGREGATE_FIELDS, aggregate_rows)
+    _write_csv(
+        output_dir / "compute_overhead_audit.csv",
+        OVERHEAD_FIELDS,
+        sorted(overhead_rows, key=lambda row: (
+            row["experiment_prefix"], row["experiment_name"],
+            row["overhead_category"], row["start_time_iso"], row["run_id"],
+        )),
+    )
+
+
+def _evidence_seconds(rows: Sequence[dict]) -> list[float]:
+    return [
+        row["evidence_duration_seconds"] for row in rows
+        if row["evidence_duration_seconds"] != ""
+    ]
+
+
+def _print_totals(
+    campaign_ids: Sequence[str],
+    ledger_rows: Sequence[dict],
+    episode_rows: Sequence[dict],
+    analyses: Sequence[ComputePaperAnalysis],
+    *,
+    reference_overhead_rows: Sequence[dict],
+    added_overhead_rows: Sequence[dict],
+) -> None:
+    _print_banner(
+        "CAMPAIGN TOTALS (single-MIG-device GPU-hours, evaluations are lower bounds)"
+    )
+    print(f"  {'campaign':<22}  {'train':>7}  {'hours':>8}  {'eval':>7}  {'hours':>8}")
+    for campaign_id in campaign_ids:
+        print(f"  {campaign_id:<22}" + "".join(
+            f"  {len(seconds):>7,}  {_hours(seconds):>8.2f}"
+            for seconds in (
+                _seconds(
+                    ledger_rows,
+                    "evidence_duration_seconds",
+                    campaign_id=campaign_id,
+                    ledger_category=category,
+                )
+                for category in (TRAINING_CATEGORY, EVALUATION_CATEGORY)
+            )
+        ))
+
+    _print_banner("ANALYSIS EVALUATION EPISODES (lower bounds)")
+    print(f"  {'analysis':<22}  {'campaign':<22}  {'episodes':>8}  {'hours':>8}")
+    for analysis in analyses:
+        seconds = _seconds(episode_rows, "span_seconds", analysis=analysis.analysis_id)
+        print(
+            f"  {analysis.analysis_id:<22}  {analysis.campaign_id:<22}  "
+            f"{len(seconds):>8,}  {_hours(seconds):>8.2f}"
+        )
+
+    _print_banner("OVERHEAD AUDIT SUMMARY (reference record and added campaigns)")
+    print(f"  {'category':<50}  {'parents':>8}  {'w/evidence':>10}  {'hours':>8}")
+    overhead_rows = [*reference_overhead_rows, *added_overhead_rows]
+    for category in sorted({row["overhead_category"] for row in overhead_rows}):
+        rows = [row for row in overhead_rows if row["overhead_category"] == category]
+        seconds = _evidence_seconds(rows)
+        print(
+            f"  {category:<50}  {len(rows):>8,}  {len(seconds):>10,}  "
+            f"{_hours(seconds):>8.2f}"
+        )
+
+    analysis_rows = [row for row in episode_rows if row["analysis"]]
+    totals = (
+        (
+            "Official spans",
+            len(ledger_rows),
+            [row["evidence_duration_seconds"] for row in ledger_rows],
+        ),
+        (
+            "Analysis evaluation episodes",
+            len(analysis_rows),
+            [row["span_seconds"] for row in analysis_rows],
+        ),
+        (
+            "Reference overhead records",
+            len(reference_overhead_rows),
+            _evidence_seconds(reference_overhead_rows),
+        ),
+        (
+            "Added overhead records",
+            len(added_overhead_rows),
+            _evidence_seconds(added_overhead_rows),
+        ),
+    )
+    _print_banner("TOTAL (single-MIG-device GPU-hours)")
+    for label, count, seconds in totals:
+        print(f"  {label:<42}  {count:>8,}  {_hours(seconds):>10.2f}")
+    print(
+        f"  {'Total records':<42}  "
+        f"{sum(count for _, count, _ in totals):>8,}  "
+        f"{_hours([value for _, _, seconds in totals for value in seconds]):>10.2f}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main() -> None:
-    import math
+def _account_experiment(
+    client,
+    campaign: _Campaign,
+    dataset: _CampaignDataset,
+    *,
+    record: _ReferenceRecord,
+    analyses: Sequence[ComputePaperAnalysis],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Return the ledger, episode, and overhead rows of one campaign experiment.
 
+    The reference campaign adds no overhead rows, because its overhead is the
+    carried-over overhead audit of the reference record.
+    """
+    is_reference = campaign.campaign_id == REFERENCE_CAMPAIGN_ID
+    print(
+        f"\n--- {dataset.experiment_name} (input_len={dataset.args.input_len}, "
+        f"target_len={dataset.args.target_len}, "
+        f"data_config_sig={dataset.data_config_signature[:12]}) ---"
+    )
+    experiment = client.get_experiment_by_name(dataset.experiment_name)
+    if experiment is None:
+        raise RuntimeError(
+            f"Expected MLflow experiment '{dataset.experiment_name}' was not found."
+        )
+    experiment_id = experiment.experiment_id
+    training = _training_rows(
+        client,
+        campaign,
+        dataset,
+        experiment_id=experiment_id,
+    )
+    evaluations, episodes = _evaluation_rows(
+        client,
+        campaign,
+        dataset,
+        experiment_id=experiment_id,
+        reference_evaluation_ms=record.evaluation_ms if is_reference else None,
+        record_end_ms=record.evaluation_end_ms,
+        analyses=analyses,
+    )
+    overhead = [] if is_reference else _campaign_overhead_rows(
+        client,
+        campaign,
+        dataset,
+        experiment_id=experiment_id,
+    )
+    analysis_episodes = [row["span_seconds"] for row in episodes if row["analysis"]]
+    for label, count, seconds in (
+        ("Training runs (current scope)", len(training),
+         _seconds(training, "evidence_duration_seconds")),
+        ("Official evaluations", len(evaluations),
+         _seconds(evaluations, "evidence_duration_seconds")),
+        ("Analysis evaluation episodes", len(analysis_episodes), analysis_episodes),
+        ("Added overhead parent runs", len(overhead), _evidence_seconds(overhead)),
+    ):
+        print(f"  {label:<32}  {count:>6,}  {_hours(seconds):>8.2f} h")
+    return training + evaluations, episodes, overhead
+
+
+def _parse_cli_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Read-only compute accounting over the experiment campaigns.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Compute accounting YAML with the campaigns and paper analyses.",
+    )
+    parser.add_argument(
+        "--reference-ledger",
+        type=Path,
+        required=True,
+        help="compute_ledger_official_runs.csv of version 0.1.0.",
+    )
+    parser.add_argument(
+        "--reference-overhead",
+        type=Path,
+        required=True,
+        help="compute_overhead_audit.csv of version 0.1.0.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Output directory, which must not exist yet.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    cli = _parse_cli_args(argv)
+    if cli.output_dir.exists():
+        raise FileExistsError(f"Output directory '{cli.output_dir}' already exists.")
     defaults = load_defaults()
-    recipe_specs = load_benchmark_recipe_specs_for_scope(defaults)
-    dataset_window_defaults = load_dataset_windows(defaults=defaults)
-    args = _build_args_namespace(defaults, recipe_specs)
-    scope_specs = _resolve_official_setup_compute_scope_specs(recipe_specs)
-    scope_methods = tuple(spec.pipeline_method for spec in scope_specs)
-    testing_scope_specs = _resolve_testing_compute_scope_specs(recipe_specs)
-
-    architectures: list[str] = list(args.benchmark_architectures)
-    datasets: list[str] = list(args.data_files)
-    prefix: str = str(args.mlflow_experiment_prefix)
-
-    tracking_uri = get_tracking_uri(args.logdir)
-    mlflow.set_tracking_uri(tracking_uri)
+    with open(cli.config) as handle:
+        registry, analyses = parse_compute_accounting_config(
+            yaml.safe_load(handle),
+            defaults=defaults,
+        )
+    campaign_ids = [campaign.campaign_id for campaign in registry]
+    if REFERENCE_CAMPAIGN_ID not in campaign_ids:
+        raise ValueError(
+            f"Compute accounting config must contain campaign '{REFERENCE_CAMPAIGN_ID}' "
+            "for the reference reproduction check."
+        )
+    record = _load_reference_record(cli.reference_ledger, cli.reference_overhead)
+    campaigns = [_resolve_campaign(campaign, defaults=defaults) for campaign in registry]
+    tracking_uris = {
+        get_tracking_uri(dataset.args.logdir)
+        for campaign in campaigns
+        for dataset in campaign.datasets
+    }
+    if len(tracking_uris) != 1:
+        raise ValueError(
+            "Compute campaigns must share one MLflow tracking server, got "
+            f"{sorted(tracking_uris)}."
+        )
+    mlflow.set_tracking_uri(tracking_uris.pop())
     client = mlflow.MlflowClient()
 
-    dataset_specs_by_key = {
-        spec.key: spec
-        for spec in resolve_with_defaults(
-            datasets=datasets,
-            targets=args.data_targets,
-            data_root=args.data_root,
+    ledger_rows: list[dict] = []
+    episode_rows: list[dict] = []
+    overhead_rows: list[dict] = []
+    for campaign in campaigns:
+        _print_banner(
+            f"Campaign {campaign.campaign_id}: {len(campaign.expected_cells)} winner "
+            "cells per dataset"
         )
-    }
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # -----------------------------------------------------------------------
-    # Official per-run ledger
-    # -----------------------------------------------------------------------
-    print("=" * 78)
-    print("Per-run ledger for official current-scope runs")
-    print("=" * 78)
-
-    all_ledger_rows: list[dict] = []
-    all_overhead_rows: list[dict] = []
-
-    # Aggregate accumulators
-    agg_by_dataset: dict[str, dict] = {}
-    agg_by_arch: dict[str, dict] = defaultdict(lambda: {"runs": 0, "seconds": 0.0})
-    agg_by_method: dict[str, dict] = defaultdict(lambda: {"runs": 0, "seconds": 0.0})
-    agg_by_dataset_arch: dict[tuple, dict] = defaultdict(lambda: {"runs": 0, "seconds": 0.0})
-    agg_by_dataset_method: dict[tuple, dict] = defaultdict(lambda: {"runs": 0, "seconds": 0.0})
-
-    # Testing aggregates
-    test_agg_by_dataset: dict[str, dict] = {}
-    test_agg_by_method: dict[str, dict] = defaultdict(lambda: {"runs": 0, "seconds": 0.0})
-
-    for dataset_key in datasets:
-        dataset_spec = dataset_specs_by_key[dataset_key]
-        ds_args = resolve_dataset_window_args(
-            args,
-            dataset_spec=dataset_spec,
-            dataset_window_defaults=dataset_window_defaults,
-            explicit_arg_overrides={},
-        )
-        data_sig = compute_data_config_signature(
-            dataset_spec=dataset_spec, args=ds_args
-        )
-        experiment_name = f"{prefix}-{dataset_key}"
-        experiment = client.get_experiment_by_name(experiment_name)
-        if experiment is None:
-            raise RuntimeError(f"Expected MLflow experiment '{experiment_name}' not found.")
-        experiment_id = experiment.experiment_id
-
-        print(f"\n--- {experiment_name} ---")
-
-        # Resolve current-scope signatures
-        scope_sigs = _resolve_scope_signatures(
-            client=client,
-            experiment_id=experiment_id,
-            dataset_spec=dataset_spec,
-            ds_args=ds_args,
-            scope_specs=scope_specs,
-            architectures=architectures,
-            data_sig=data_sig,
-        )
-
-        scope_expected_kinds = _expected_pipeline_kinds_by_cell(
-            scope_specs=scope_specs,
-            architectures=architectures,
-        )
-
-        # Query all finished parent runs in the current experiment. Runs outside
-        # the official setup scope are accounted for as current-prefix overhead.
-        filter_string = (
-            "attribute.status = 'FINISHED'"
-        )
-        all_finished = search_runs_all(
-            client, [experiment_id],
-            filter_string=filter_string,
-            run_view_type=ViewType.ACTIVE_ONLY,
-        )
-        arch_set = set(architectures)
-        method_set = set(scope_methods)
-        parent_finished = [
-            r for r in all_finished
-            if not _safe_tag(r, "mlflow.parentRunId")
+        campaign_analyses = [
+            analysis for analysis in analyses if analysis.campaign_id == campaign.campaign_id
         ]
-        in_scope = []
-        out_of_scope = []
-        for r in parent_finished:
-            arch = _safe_tag(r, "model_architecture")
-            method = _safe_tag(r, "pipeline_method")
-            kind = _safe_tag(r, "pipeline_kind")
-            expected_kind = scope_expected_kinds.get((arch, method))
-            is_scope_member = (
-                arch in arch_set
-                and method in method_set
-                and expected_kind is not None
-                and kind == expected_kind
-                and _safe_tag(r, "data_config_signature") == data_sig
-                and _safe_tag(r, "signature") in scope_sigs
-            )
-            if is_scope_member:
-                in_scope.append(r)
-            else:
-                out_of_scope.append(r)
-
-        ds_runs = 0
-        ds_seconds = 0.0
-
-        for r in in_scope:
-            dur, src = _resolve_official_setup_duration_seconds_strict(
+        campaign_rows: list[dict] = []
+        for dataset in campaign.datasets:
+            rows, episodes, overhead = _account_experiment(
                 client,
-                r,
-                test_metric=str(args.test_metric),
+                campaign,
+                dataset,
+                record=record,
+                analyses=campaign_analyses,
             )
-            tested = _safe_tag(r, "best_model") == "true" and _safe_tag(r, "backbone_current") == "true"
-            kind = _safe_tag(r, "pipeline_kind")
-            ledger_category = (
-                "training_current_scope"
-                if kind == "train"
-                else "wrapper_current_scope"
+            campaign_rows.extend(rows)
+            episode_rows.extend(episodes)
+            overhead_rows.extend(overhead)
+            time.sleep(QUERY_PAUSE_SECONDS)
+        if campaign.campaign_id == REFERENCE_CAMPAIGN_ID:
+            _check_reference_reproduction(
+                campaign_rows,
+                training_ms=record.training_ms,
+                evaluation_ms=record.evaluation_ms,
             )
-            row = _build_ledger_row(
-                r,
-                experiment_name=experiment_name,
-                dataset_key=dataset_key,
-                duration_seconds=dur,
-                duration_source=src,
-                tested=tested,
-                ledger_category=ledger_category,
-            )
-            all_ledger_rows.append(row)
-            ds_runs += 1
-            ds_seconds += dur
-
-            arch = _safe_tag(r, "model_architecture")
-            method = _safe_tag(r, "pipeline_method")
-            agg_by_arch[arch]["runs"] += 1
-            agg_by_arch[arch]["seconds"] += dur
-            agg_by_method[method]["runs"] += 1
-            agg_by_method[method]["seconds"] += dur
-            agg_by_dataset_arch[(dataset_key, arch)]["runs"] += 1
-            agg_by_dataset_arch[(dataset_key, arch)]["seconds"] += dur
-            agg_by_dataset_method[(dataset_key, method)]["runs"] += 1
-            agg_by_dataset_method[(dataset_key, method)]["seconds"] += dur
-
-        agg_by_dataset[dataset_key] = {"runs": ds_runs, "seconds": ds_seconds}
-        print(f"  Setup (current-scope): {ds_runs} runs, {ds_seconds/3600:.1f} hrs")
-
-        # Out-of-scope finished runs → overhead
-        for r in out_of_scope:
-            dur, src = _resolve_run_duration_seconds(client, r)
-            all_overhead_rows.append(_build_overhead_row(
-                r, experiment_name=experiment_name, experiment_prefix=prefix,
-                dataset_key=dataset_key, duration_seconds=dur, duration_source=src,
-                overhead_category="improv11_stale_out_of_scope",
-            ))
-
-        # --- Current-scope testing winners ---
-        # Resolve expected testing kinds
-        testing_expected_kinds: dict[tuple[str, str], str] = {}
-        for spec in testing_scope_specs:
-            method = str(spec.pipeline_method).strip()
-            kind = str(spec.pipeline_kind).strip()
-            if kind not in ALLOWED_PIPELINE_KINDS:
-                continue
-            for arch in architectures:
-                policy_skip = scope_policy_skip_reason_for_spec(spec, arch)
-                if policy_skip is not None:
-                    continue
-                testing_expected_kinds[(arch, method)] = kind
-
-        filter_winners = (
-            "attribute.status = 'FINISHED' "
-            "AND tags.best_model = 'true' "
-            "AND tags.backbone_current = 'true' "
-            f"AND tags.data_config_signature = '{data_sig}'"
-        )
-        current_winners = search_runs_all(
-            client, [experiment_id],
-            filter_string=filter_winners,
-            run_view_type=ViewType.ACTIVE_ONLY,
-        )
-        current_winners = [
-            r for r in current_winners
-            if not _safe_tag(r, "mlflow.parentRunId")
-        ]
-
-        test_ds_runs = 0
-        test_ds_seconds = 0.0
-
-        for r in current_winners:
-            tags = r.data.tags or {}
-            try:
-                resolved = resolve_pipeline_tags(tags, run_id=r.info.run_id)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Could not resolve pipeline tags for current winner "
-                    f"{r.info.run_id} in {experiment_name}."
-                ) from exc
-            cell = (_safe_tag(r, "model_architecture"), resolved["pipeline_method"])
-            expected_kind = testing_expected_kinds.get(cell)
-            if expected_kind is None:
-                continue
-            if resolved["pipeline_kind"] != expected_kind:
-                raise RuntimeError(
-                    f"Current winner {r.info.run_id} in {experiment_name} has "
-                    f"pipeline_kind={resolved['pipeline_kind']!r}, expected "
-                    f"{expected_kind!r} for {cell}."
-                )
-            try:
-                fully_tested = is_fully_tested(r, args=args, client=None)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Could not validate testing coverage for current winner "
-                    f"{r.info.run_id} in {experiment_name}."
-                ) from exc
-            if not fully_tested:
-                raise RuntimeError(
-                    f"Current winner {r.info.run_id} in {experiment_name} is not "
-                    "fully tested for the requested evaluation scope."
-                )
-
-            dur, src = _resolve_testing_duration_seconds(client, r)
-            row = _build_ledger_row(
-                r,
-                experiment_name=experiment_name,
-                dataset_key=dataset_key,
-                duration_seconds=dur,
-                duration_source=src,
-                tested=True,
-                ledger_category="testing_current_winner",
-            )
-            all_ledger_rows.append(row)
-            if not math.isnan(dur):
-                test_ds_runs += 1
-                test_ds_seconds += dur
-
-                method = resolved["pipeline_method"]
-                test_agg_by_method[method]["runs"] += 1
-                test_agg_by_method[method]["seconds"] += dur
-
-        test_agg_by_dataset[dataset_key] = {"runs": test_ds_runs, "seconds": test_ds_seconds}
-        print(f"  Testing (current winners): {test_ds_runs} runs, {test_ds_seconds/3600:.1f} hrs")
-
-        # ---------------------------------------------------------------
-        # Current-prefix non-current-scope overhead within this experiment
-        # ---------------------------------------------------------------
-        # Failed / killed / running runs
-        for status_val in ["FAILED", "KILLED", "RUNNING"]:
-            filt = f"attribute.status = '{status_val}'"
-            status_runs = search_runs_all(
-                client, [experiment_id],
-                filter_string=filt,
-                run_view_type=ViewType.ACTIVE_ONLY,
-            )
-            for r in status_runs:
-                if _safe_tag(r, "mlflow.parentRunId"):
-                    continue
-                dur, src = _best_effort_duration(client, r)
-                all_overhead_rows.append(_build_overhead_row(
-                    r, experiment_name=experiment_name, experiment_prefix=prefix,
-                    dataset_key=dataset_key, duration_seconds=dur, duration_source=src,
-                    overhead_category=f"improv11_{status_val.lower()}",
-                ))
-
-        # Soft-deleted runs (ViewType.DELETED_ONLY)
-        deleted_runs = search_runs_all(
-            client, [experiment_id],
-            filter_string="",
-            run_view_type=ViewType.DELETED_ONLY,
-        )
-        for r in deleted_runs:
-            if _safe_tag(r, "mlflow.parentRunId"):
-                continue
-            dur, src = _best_effort_duration(client, r)
-            all_overhead_rows.append(_build_overhead_row(
-                r, experiment_name=experiment_name, experiment_prefix=prefix,
-                dataset_key=dataset_key, duration_seconds=dur, duration_source=src,
-                overhead_category="improv11_deleted",
-            ))
-
-    # -----------------------------------------------------------------------
-    # Older prefix and non-benchmark experiment overhead
-    # -----------------------------------------------------------------------
-    print("\n" + "=" * 78)
-    print("Older prefix and non-benchmark experiment overhead")
-    print("=" * 78)
-
-    all_experiments = client.search_experiments()
-    current_experiment_names = {f"{prefix}-{ds}" for ds in datasets}
-
-    for exp in sorted(all_experiments, key=lambda e: e.name):
-        if exp.name in current_experiment_names:
-            continue
-        if exp.name == "Default":
-            exp_prefix = "default"
-            exp_dataset = ""
-        elif exp.name == "Meta Analysis":
-            exp_prefix = "meta_analysis"
-            exp_dataset = ""
-        elif exp.name.startswith("improv-"):
-            parts = exp.name.split("-", 2)
-            exp_prefix = f"improv-{parts[1]}" if len(parts) >= 2 else exp.name
-            exp_dataset = parts[2] if len(parts) >= 3 else ""
-        else:
-            exp_prefix = exp.name
-            exp_dataset = ""
-
-        # Query all runs (active and deleted)
-        for view_type, view_label in [
-            (ViewType.ACTIVE_ONLY, "active"),
-            (ViewType.DELETED_ONLY, "deleted"),
-        ]:
-            runs = search_runs_all(
-                client, [exp.experiment_id],
-                filter_string="",
-                run_view_type=view_type,
-            )
-            parent_runs = [r for r in runs if not _safe_tag(r, "mlflow.parentRunId")]
-            if not parent_runs:
-                continue
-            print(f"  {exp.name} ({view_label}): {len(parent_runs)} parent runs")
-
-            for r in parent_runs:
-                dur, src = _best_effort_duration(client, r)
-                status = r.info.status
-                category = f"{exp_prefix}_{view_label}_{status.lower()}"
-                all_overhead_rows.append(_build_overhead_row(
-                    r, experiment_name=exp.name, experiment_prefix=exp_prefix,
-                    dataset_key=exp_dataset, duration_seconds=dur,
-                    duration_source=src, overhead_category=category,
-                ))
-
-    # -----------------------------------------------------------------------
-    # Write CSVs
-    # -----------------------------------------------------------------------
-    print("\n" + "=" * 78)
-    print("Writing output CSVs")
-    print("=" * 78)
-
-    # 1. Per-run ledger CSV
-    ledger_path = OUTPUT_DIR / "compute_ledger_official_runs.csv"
-    with open(ledger_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=LEDGER_FIELDS)
-        writer.writeheader()
-        for row in sorted(all_ledger_rows, key=lambda r: (
-            r["dataset"], r["ledger_category"], r["model_architecture"],
-            r["pipeline_method"], r["start_time_iso"],
-        )):
-            writer.writerow(row)
-    print(f"  {ledger_path} ({len(all_ledger_rows)} rows)")
-
-    # 2. Aggregate summaries CSV
-    agg_path = OUTPUT_DIR / "compute_aggregates.csv"
-    agg_rows: list[dict] = []
-
-    # By dataset (official training setup spans).
-    for ds in datasets:
-        if ds in agg_by_dataset:
-            d = agg_by_dataset[ds]
-            agg_rows.append({
-                "group": "training_by_dataset", "key": ds,
-                "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-            })
-
-    # By architecture (official training setup spans).
-    for arch in architectures:
-        if arch in agg_by_arch:
-            d = agg_by_arch[arch]
-            agg_rows.append({
-                "group": "training_by_architecture", "key": arch,
-                "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-            })
-
-    # By method (official training setup spans).
-    for method in scope_methods:
-        if method in agg_by_method:
-            d = agg_by_method[method]
-            agg_rows.append({
-                "group": "training_by_method", "key": method,
-                "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-            })
-
-    # By dataset x architecture (official training setup spans).
-    for ds in datasets:
-        for arch in architectures:
-            k = (ds, arch)
-            if k in agg_by_dataset_arch:
-                d = agg_by_dataset_arch[k]
-                if d["runs"] > 0:
-                    agg_rows.append({
-                        "group": "training_by_dataset_architecture",
-                        "key": f"{ds}/{arch}",
-                        "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-                    })
-
-    # By dataset x method (official training setup spans).
-    for ds in datasets:
-        for method in scope_methods:
-            k = (ds, method)
-            if k in agg_by_dataset_method:
-                d = agg_by_dataset_method[k]
-                if d["runs"] > 0:
-                    agg_rows.append({
-                        "group": "training_by_dataset_method",
-                        "key": f"{ds}/{method}",
-                        "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-                    })
-
-    # Testing by dataset
-    for ds in datasets:
-        if ds in test_agg_by_dataset:
-            d = test_agg_by_dataset[ds]
-            agg_rows.append({
-                "group": "testing_by_dataset", "key": ds,
-                "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-            })
-
-    # Testing by method
-    for method in sorted(test_agg_by_method):
-        d = test_agg_by_method[method]
-        agg_rows.append({
-            "group": "testing_by_method", "key": method,
-            "runs": d["runs"], "hours": f"{d['seconds']/3600:.2f}",
-        })
-
-    with open(agg_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["group", "key", "runs", "hours"])
-        writer.writeheader()
-        for row in agg_rows:
-            writer.writerow(row)
-    print(f"  {agg_path} ({len(agg_rows)} rows)")
-
-    # 3. Overhead audit CSV
-    overhead_path = OUTPUT_DIR / "compute_overhead_audit.csv"
-    with open(overhead_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=OVERHEAD_FIELDS)
-        writer.writeheader()
-        for row in sorted(all_overhead_rows, key=lambda r: (
-            r["experiment_prefix"], r["experiment_name"],
-            r["overhead_category"], r["start_time_iso"],
-        )):
-            writer.writerow(row)
-    print(f"  {overhead_path} ({len(all_overhead_rows)} rows)")
-
-    # -----------------------------------------------------------------------
-    # Overhead summary
-    # -----------------------------------------------------------------------
-    print("\n" + "=" * 78)
-    print("OVERHEAD AUDIT SUMMARY")
-    print("=" * 78)
-
-    cat_summary: dict[str, dict] = defaultdict(
-        lambda: {"parent_runs": 0, "seconds_with_evidence": 0.0, "runs_with_evidence": 0}
+            print(f"\n  {REFERENCE_CAMPAIGN_ID} reproduces the reference record run by run.")
+        ledger_rows.extend(campaign_rows)
+    counted = {row["analysis"] for row in episode_rows}
+    empty = sorted(
+        analysis.analysis_id for analysis in analyses if analysis.analysis_id not in counted
     )
-    for row in all_overhead_rows:
-        cat = row["overhead_category"]
-        cat_summary[cat]["parent_runs"] += 1
-        dur = row["evidence_duration_seconds"]
-        if dur != "" and not math.isnan(float(dur)):
-            cat_summary[cat]["seconds_with_evidence"] += float(dur)
-            cat_summary[cat]["runs_with_evidence"] += 1
+    if empty:
+        raise RuntimeError(f"Paper analyses without an episode in their window: {empty}.")
 
-    print(f"  {'category':<50}  {'parents':>8}  {'w/evidence':>10}  {'hours':>10}")
-    print(f"  {'-'*50}  {'-'*8}  {'-'*10}  {'-'*10}")
-    total_overhead_parents = 0
-    total_overhead_seconds = 0.0
-    total_overhead_with_evidence = 0
-    for cat in sorted(cat_summary):
-        d = cat_summary[cat]
-        hrs = d["seconds_with_evidence"] / 3600.0
-        print(
-            f"  {cat:<50}  {d['parent_runs']:>8}  "
-            f"{d['runs_with_evidence']:>10}  {hrs:>10.1f}"
-        )
-        total_overhead_parents += d["parent_runs"]
-        total_overhead_seconds += d["seconds_with_evidence"]
-        total_overhead_with_evidence += d["runs_with_evidence"]
-    print(f"  {'-'*50}  {'-'*8}  {'-'*10}  {'-'*10}")
-    print(
-        f"  {'TOTAL':<50}  {total_overhead_parents:>8}  "
-        f"{total_overhead_with_evidence:>10}  {total_overhead_seconds/3600:.1f}"
+    _print_banner("Writing output CSVs")
+    _write_outputs(
+        cli.output_dir,
+        ledger_rows=ledger_rows,
+        episode_rows=episode_rows,
+        aggregate_rows=_aggregate_rows(campaign_ids, ledger_rows, episode_rows, analyses),
+        overhead_rows=[*record.overhead_rows, *overhead_rows],
     )
-
-    # -----------------------------------------------------------------------
-    # Final summary
-    # -----------------------------------------------------------------------
-    total_train_runs = sum(d["runs"] for d in agg_by_dataset.values())
-    total_train_seconds = sum(d["seconds"] for d in agg_by_dataset.values())
-    total_test_runs = sum(d["runs"] for d in test_agg_by_dataset.values())
-    total_test_seconds = sum(d["seconds"] for d in test_agg_by_dataset.values())
-
-    print("\n" + "=" * 78)
-    print("OFFICIAL COMPUTE TOTALS (confirmed)")
-    print("=" * 78)
-    print(f"  Setup runs (current scope):              {total_train_runs:,}")
-    print(f"  Setup GPU-hours:                         {total_train_seconds/3600:,.0f}")
-    print(f"  Testing winner runs:                     {total_test_runs:,}")
-    print(f"  Testing GPU-hours (lower bound):         {total_test_seconds/3600:,.0f}")
-    print(f"  Combined official:                       {(total_train_seconds+total_test_seconds)/3600:,.0f}")
-    print()
-    print(f"  Full-project overhead parent runs:       {total_overhead_parents:,}")
-    print(f"  Full-project overhead GPU-hours (est.):  {total_overhead_seconds/3600:,.0f}")
-    print(
-        f"  Full-project total (official + overhead): "
-        f"{(total_train_seconds+total_test_seconds+total_overhead_seconds)/3600:,.0f}"
+    _print_totals(
+        campaign_ids,
+        ledger_rows,
+        episode_rows,
+        analyses,
+        reference_overhead_rows=record.overhead_rows,
+        added_overhead_rows=overhead_rows,
     )
-    print("=" * 78)
 
 
 if __name__ == "__main__":

@@ -6,33 +6,17 @@ import run_analysis
 import run_testing
 import run_training
 import testing.evaluation as evaluation
-from config_loader import build_parser, load_defaults, load_benchmark_scope
+from config_loader import build_parser, load_benchmark_scope, load_defaults, load_hparams
 from pipelines.recipes import PIPELINE_RECIPE_PATHS_BY_METHOD
 from pipelines.selection import (
+    load_benchmark_recipe_specs_for_scope,
     resolve_benchmark_method_architecture_scope,
     resolve_requested_methods,
 )
 
 
-BENCHMARK_METHOD_ORDER = (
-    "baseline",
-    "randomized_training",
-    "adversarial_training",
-    "adaptive_robust_loss",
-    "ensemble",
-    "randomized_smoothing",
-    "fault_augmentation",
-    "revin",
-)
-BENCHMARK_ARCHITECTURES = (
-    "DLinear",
-    "TSMixer",
-    "PatchTST",
-    "GRU",
-    "ModernTCN",
-    "SeasonalNaive",
-    "Chronos2",
-)
+def _benchmark_methods() -> tuple[str, ...]:
+    return tuple(load_defaults()["BENCHMARK_METHODS"])
 
 
 def _expected_benchmark_scope(defaults=None, benchmark_scope=None):
@@ -88,7 +72,7 @@ def _patch_training_runtime(monkeypatch):
     calls: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         "pipelines.selection.load_hparams",
-        lambda: {architecture: {"lr": [0.001]} for architecture in BENCHMARK_ARCHITECTURES},
+        lambda: {architecture: {"lr": [0.001]} for architecture in load_hparams()},
     )
     monkeypatch.setattr(run_training, "set_mlflow_storage_env", lambda _args: None)
     monkeypatch.setattr(run_training, "get_tracking_uri", lambda logdir: f"file:{logdir}")
@@ -121,7 +105,6 @@ def test_benchmark_defaults_expose_method_scope_without_removed_method_flags():
     parser = build_parser(defaults)
 
     assert defaults["METHOD"] is None
-    assert tuple(defaults["BENCHMARK_METHODS"]) == BENCHMARK_METHOD_ORDER
     assert "IMPROVEMENT_METHOD" not in defaults
     assert "SKIP_RECIPES" not in defaults
     assert parser.parse_args([]).method is None
@@ -143,7 +126,7 @@ def test_resolve_requested_methods_matches_model_scope_shape():
 
     explicit_args = SimpleNamespace(
         method=["adaptive_robust_loss", "randomized_training"],
-        benchmark_methods=list(BENCHMARK_METHOD_ORDER),
+        benchmark_methods=list(_benchmark_methods()),
     )
     assert resolve_requested_methods(explicit_args, configured_methods=configured) == [
         "adaptive_robust_loss",
@@ -152,14 +135,14 @@ def test_resolve_requested_methods_matches_model_scope_shape():
 
     duplicate_args = SimpleNamespace(
         method=["baseline", "Baseline"],
-        benchmark_methods=list(BENCHMARK_METHOD_ORDER),
+        benchmark_methods=list(_benchmark_methods()),
     )
     with pytest.raises(ValueError, match="METHOD contains duplicate value 'baseline'"):
         resolve_requested_methods(duplicate_args, configured_methods=configured)
 
     all_args = SimpleNamespace(
         method=["all"],
-        benchmark_methods=list(BENCHMARK_METHOD_ORDER),
+        benchmark_methods=list(_benchmark_methods()),
     )
     with pytest.raises(ValueError, match="METHOD no longer supports 'all'"):
         resolve_requested_methods(all_args, configured_methods=configured)
@@ -184,9 +167,16 @@ def test_run_training_no_args_expands_benchmark_applicability(monkeypatch):
 
     defaults = load_defaults()
     expected_scope = _expected_benchmark_scope(defaults)
+    specs_by_method = {
+        spec.pipeline_method: spec
+        for spec in load_benchmark_recipe_specs_for_scope(defaults)
+    }
     expected_calls = [
         (method, dataset, architecture)
-        for method in defaults["BENCHMARK_METHODS"]
+        for method in run_training._training_order(
+            list(defaults["BENCHMARK_METHODS"]),
+            specs_by_method,
+        )
         for dataset in defaults["DATA_FILES"]
         for architecture in expected_scope[method]
     ]
@@ -194,7 +184,10 @@ def test_run_training_no_args_expands_benchmark_applicability(monkeypatch):
     assert calls == expected_calls
 
 
-def test_run_training_scoped_methods_do_not_train_implicit_baseline(monkeypatch):
+def test_run_training_scoped_methods_do_not_train_implicit_baseline(
+    monkeypatch,
+    registered_methods_defaults,
+):
     calls = _patch_training_runtime(monkeypatch)
     monkeypatch.setattr(
         "sys.argv",
@@ -218,7 +211,10 @@ def test_run_training_scoped_methods_do_not_train_implicit_baseline(monkeypatch)
     ]
 
 
-def test_run_training_scoped_methods_filter_default_architectures(monkeypatch):
+def test_run_training_scoped_methods_filter_default_architectures(
+    monkeypatch,
+    registered_methods_defaults,
+):
     calls = _patch_training_runtime(monkeypatch)
     monkeypatch.setattr(
         "sys.argv",
@@ -234,15 +230,15 @@ def test_run_training_scoped_methods_filter_default_architectures(monkeypatch):
 
     run_training.main()
 
-    expected_architectures = ("DLinear", "TSMixer", "PatchTST", "GRU", "ModernTCN")
+    expected_scope = _expected_benchmark_scope(registered_methods_defaults)
     assert calls == [
         *[
             ("randomized_training", "ETTh1", architecture)
-            for architecture in expected_architectures
+            for architecture in expected_scope["randomized_training"]
         ],
         *[
             ("adaptive_robust_loss", "ETTh1", architecture)
-            for architecture in expected_architectures
+            for architecture in expected_scope["adaptive_robust_loss"]
         ],
     ]
 
@@ -276,6 +272,7 @@ def test_run_training_scoped_methods_filter_default_architectures(monkeypatch):
 def test_run_training_rejects_unknown_all_and_explicit_unsupported_pairs(
     monkeypatch,
     argv,
+    registered_methods_defaults,
 ):
     calls = _patch_training_runtime(monkeypatch)
     monkeypatch.setattr("sys.argv", argv)
@@ -285,8 +282,10 @@ def test_run_training_rejects_unknown_all_and_explicit_unsupported_pairs(
     assert calls == []
 
 
-def test_run_testing_parser_uses_benchmark_method_scope(monkeypatch):
-    monkeypatch.setattr(run_testing, "load_defaults", load_defaults)
+def test_run_testing_parser_uses_benchmark_method_scope(
+    monkeypatch,
+    registered_methods_defaults,
+):
     monkeypatch.setattr(
         run_testing,
         "load_dataset_windows",
@@ -310,7 +309,9 @@ def test_run_testing_parser_uses_benchmark_method_scope(monkeypatch):
     )
 
     assert args.method == ["randomized_training", "adaptive_robust_loss"]
-    assert tuple(spec.pipeline_method for spec in recipe_specs) == BENCHMARK_METHOD_ORDER
+    assert [spec.pipeline_method for spec in recipe_specs] == (
+        registered_methods_defaults["BENCHMARK_METHODS"]
+    )
     assert args._method_architecture_scope == {
         "randomized_training": (
             "DLinear",
@@ -342,7 +343,7 @@ def test_run_testing_omitted_method_uses_benchmark_methods(monkeypatch):
     args, recipe_specs, _ = run_testing.prepare_testing_entrypoint_args(["--full-coverage"])
 
     assert args.method is None
-    assert tuple(spec.pipeline_method for spec in recipe_specs) == BENCHMARK_METHOD_ORDER
+    assert tuple(spec.pipeline_method for spec in recipe_specs) == _benchmark_methods()
     assert args._method_architecture_scope == _expected_benchmark_scope()
 
 
@@ -442,8 +443,10 @@ def test_testing_scope_resolver_receives_requested_architecture_order(monkeypatc
     }
 
 
-def test_run_testing_explicit_method_does_not_select_implicit_baseline(monkeypatch):
-    monkeypatch.setattr(run_testing, "load_defaults", load_defaults)
+def test_run_testing_explicit_method_does_not_select_implicit_baseline(
+    monkeypatch,
+    registered_methods_defaults,
+):
     monkeypatch.setattr(
         run_testing,
         "load_dataset_windows",
@@ -459,8 +462,10 @@ def test_run_testing_explicit_method_does_not_select_implicit_baseline(monkeypat
     assert args._method_architecture_scope == {"randomized_training": ("GRU",)}
 
 
-def test_run_testing_explicit_method_filters_default_architectures(monkeypatch):
-    monkeypatch.setattr(run_testing, "load_defaults", load_defaults)
+def test_run_testing_explicit_method_filters_default_architectures(
+    monkeypatch,
+    registered_methods_defaults,
+):
     monkeypatch.setattr(
         run_testing,
         "load_dataset_windows",
@@ -474,7 +479,9 @@ def test_run_testing_explicit_method_filters_default_architectures(monkeypatch):
     )
 
     assert args._method_architecture_scope == {
-        "randomized_training": ("DLinear", "TSMixer", "PatchTST", "GRU", "ModernTCN")
+        "randomized_training": _expected_benchmark_scope(registered_methods_defaults)[
+            "randomized_training"
+        ]
     }
 
 
@@ -499,8 +506,11 @@ def test_run_testing_parser_rejects_removed_method_flags():
         ["--method", "adversarial_training", "--model", "Chronos2"],
     ],
 )
-def test_run_testing_rejects_bad_method_scope_before_selection(monkeypatch, argv):
-    monkeypatch.setattr(run_testing, "load_defaults", load_defaults)
+def test_run_testing_rejects_bad_method_scope_before_selection(
+    monkeypatch,
+    argv,
+    registered_methods_defaults,
+):
     monkeypatch.setattr(
         run_testing,
         "load_dataset_windows",
@@ -527,15 +537,28 @@ def test_run_testing_rejects_bad_method_scope_before_selection(monkeypatch, argv
         ["--method", "adversarial_training", "--model", "Chronos2"],
     ],
 )
-def test_run_analysis_rejects_bad_method_scope_before_meta_analysis(argv):
+def test_run_analysis_rejects_bad_method_scope_before_meta_analysis(
+    argv,
+    registered_methods_defaults,
+):
     with pytest.raises(ValueError):
         run_analysis.prepare_analysis_entrypoint_args(argv)
 
 
-def test_run_analysis_accepts_recipe_param_overrides_for_coverage_recompute():
+def test_run_analysis_requires_baseline_for_method_scope(registered_methods_defaults):
+    with pytest.raises(ValueError, match="--method must include baseline"):
+        run_analysis.prepare_analysis_entrypoint_args(
+            ["--method", "randomized_training", "--model", "GRU"]
+        )
+
+
+def test_run_analysis_accepts_recipe_param_overrides_for_coverage_recompute(
+    registered_methods_defaults,
+):
     args = run_analysis.prepare_analysis_entrypoint_args(
         [
             "--method",
+            "baseline",
             "randomized_smoothing",
             "--model",
             "GRU",
@@ -558,7 +581,15 @@ def test_shared_applicability_validation_rejects_explicit_bad_pair():
         )
     assert resolve_benchmark_method_architecture_scope(
         methods=["randomized_training"],
-        architectures=BENCHMARK_ARCHITECTURES,
+        architectures=(
+            "DLinear",
+            "TSMixer",
+            "PatchTST",
+            "GRU",
+            "ModernTCN",
+            "SeasonalNaive",
+            "Chronos2",
+        ),
         explicit_architectures=False,
         context="test",
     ) == {

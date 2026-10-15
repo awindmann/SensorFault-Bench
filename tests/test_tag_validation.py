@@ -6,6 +6,7 @@ from data.perturbations import build_perturbation_scenario_params_signature
 from pipelines import selection as selection_module
 from pipelines.selection import resolve_pipeline_tags
 from utils.parsing import (
+    DEGRADATION_SCORING_SEMANTICS,
     ROBUSTNESS_RESULTS_COMPLETE_TAG,
     build_degradation_eval_context_tag_payload,
     require_degradation_eval_context_from_args,
@@ -199,7 +200,7 @@ def test_is_fully_tested_uses_seed_data_for_canonical_eval_data_seed(monkeypatch
             params={"tested": "true"},
             tags={
                 "robustness_scoring_semantics": (
-                    selection_module.ROBUSTNESS_SCORING_SEMANTICS
+                    DEGRADATION_SCORING_SEMANTICS
                 ),
                 "seed_data": "11",
                 "seed_eval": "33",
@@ -210,7 +211,9 @@ def test_is_fully_tested_uses_seed_data_for_canonical_eval_data_seed(monkeypatch
     with pytest.raises(RuntimeError, match="stopped after seed resolution"):
         selection_module.is_fully_tested(
             run,
-            args=SimpleNamespace(eval_data_seed=None),
+            args=SimpleNamespace(
+                eval_data_seed=None, perturbation_severity_distribution="uniform"
+            ),
         )
 
     assert captured == {
@@ -248,6 +251,7 @@ def test_is_fully_tested_reuses_canonical_seed_data_degradation_bundle():
         n_test_samples=64,
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=scenarios,
+        perturbation_severity_distribution="uniform",
         strict_iid=False,
         bootstrap_ci_resamples=99,
         bootstrap_ci_confidence_level=0.95,
@@ -265,7 +269,7 @@ def test_is_fully_tested_reuses_canonical_seed_data_degradation_bundle():
         context="args",
     )
     tags = {
-        "robustness_scoring_semantics": selection_module.ROBUSTNESS_SCORING_SEMANTICS,
+        "robustness_scoring_semantics": DEGRADATION_SCORING_SEMANTICS,
         "seed_data": "11",
         "seed_eval": "33",
         "perturbation_scenario_params_signature": (

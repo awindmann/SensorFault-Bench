@@ -34,6 +34,7 @@ from pipelines.ranking import (
     selection_metric_key_for_kind,
 )
 from pipelines.recipes import PIPELINE_RECIPE_PATHS_BY_METHOD
+from pipelines.scope import load_benchmark_architecture_families
 from pipelines.selection import (
     expected_perturbation_coupling_from_args,
     is_fully_tested,
@@ -62,7 +63,6 @@ from testing.shared import (
     _require_best_model_current_tags,
 )
 from utils.parsing import (
-    DEGRADATION_SCORING_SEMANTICS,
     METHOD_DELTA_PAIR_BOOTSTRAP_CI_SEMANTICS,
     assert_no_duplicate_rows,
     build_method_delta_pair_bootstrap_ci_seed_key,
@@ -97,9 +97,11 @@ from utils.parsing import (
     require_tag_value_with_optional_param_match,
     require_tested_param,
     require_winner_selection_provenance_tags,
+    robustness_scoring_semantics_for_severity_distribution,
     resolve_meta_analysis_eval_data_seed_scope,
     sample_dataframe_records,
     resolve_dataset_window_args,
+    scenarios_outside_figure_registry,
     tag_is_truthy,
     validate_scoped_raw_display_id_values,
     validate_raw_display_id_values,
@@ -119,6 +121,7 @@ from utils.scoring import (
     require_logged_fixed_channel_fraction_metric_bundle,
 )
 from utils.rng import derive_seed
+from data.samplers import resolve_severity_distribution
 from visualizations.semantics import (
     PlotSemanticsRecord,
     require_plot_semantics_mapping,
@@ -401,6 +404,53 @@ class UnsupportedConfiguredBaselineParetoScope(ValueError):
 def _core_figure_registry() -> CoreFigureRegistry:
     """Load the dedicated core-figure registry once per process."""
     return load_parsed_core_figure_registry()
+
+
+def _unsupported_figure_scenarios(args, *, full_coverage: bool) -> tuple[str, ...]:
+    """Resolve configured scenarios that scenario-keyed figures cannot render.
+
+    The core-figure registry owns the published scenario vocabulary while
+    `perturbation_scenarios` owns evaluation identity, so an alternative
+    evaluation context such as a timing-warp substitution can configure
+    scenarios the registry does not define. Those scenarios have no display
+    label, no family, and no column position, which makes scenario-keyed
+    figures undefined rather than partially covered. The fixed-channel-fraction
+    summary also classifies worst scenarios by registry family, so a configured
+    fixed channel fraction raises here instead of failing after the tables.
+    """
+    unsupported = scenarios_outside_figure_registry(
+        expected_perturbation_coupling_from_args(args)["perturbation_scenarios"],
+        registry_scenarios=_core_figure_registry().scenario_display_order,
+        context="Meta-analysis scenario figure scope",
+    )
+    if not unsupported:
+        return ()
+    if full_coverage:
+        raise ValueError(
+            "Meta-analysis scenario figure scope: configured perturbation scenarios "
+            f"{list(unsupported)} are not defined in "
+            "configs/reporting/core_figures.yaml. Pass --no-full-coverage to emit "
+            "the analysis tables with scenario-keyed figures omitted."
+        )
+    fixed_fraction, _ = _parse_fixed_channel_fraction_args(args)
+    if fixed_fraction is not None:
+        raise ValueError(
+            "Meta-analysis scenario figure scope: configured perturbation scenarios "
+            f"{list(unsupported)} are not defined in "
+            "configs/reporting/core_figures.yaml, but the fixed-channel-fraction "
+            "summary compares worst-scenario classes through its "
+            "CORE_SCENARIO_GROUPS. Run the fixed-channel-fraction analysis with "
+            "the scored scenarios."
+        )
+    print(
+        "Meta-analysis scenario figure scope: full_coverage=false, configured "
+        f"perturbation scenarios {list(unsupported)} are not defined in "
+        "configs/reporting/core_figures.yaml. Omitting the scenario-keyed "
+        "outputs (method scenario-delta heatmap and the scenario-family delta "
+        "framing, whose two tables are written empty) and continuing with the "
+        "remaining analysis tables."
+    )
+    return unsupported
 
 
 @lru_cache(maxsize=1)
@@ -929,7 +979,7 @@ def _build_configured_baseline_rank_pareto_figure_specs(
         y_title=baseline_rank_metric_title,
     )
 
-    # 2x2 per-dataset raw-performance-vs-degradation Pareto.
+    # Per-dataset raw-performance-vs-degradation Pareto.
     dataset_panel_frames: list[tuple[str, pd.DataFrame]] = [
         (dataset_key, plot_df.loc[plot_df["dataset"] == dataset_key].copy())
         for dataset_key in configured_dataset_keys
@@ -943,10 +993,10 @@ def _build_configured_baseline_rank_pareto_figure_specs(
 
     specs: list[FigureArtifactSpec] = []
 
-    if len(dataset_panel_frames) != 4:
+    if len(dataset_panel_frames) > 12:
         warnings.warn(
             f"{context}: skipping per-dataset baseline Pareto export because the "
-            f"2x2 panel helper requires exactly 4 configured datasets, found "
+            f"panel helper supports at most 12 configured datasets, found "
             f"{len(dataset_panel_frames)}.",
             stacklevel=2,
         )
@@ -2590,7 +2640,8 @@ def _build_method_trajectory_plot_entries(
                 baseline_backbone_col="model_architecture",
                 improvement_name_col="pipeline_id",
                 robustness_output_label=trajectory_output_label_for_method(
-                    robustness_method
+                    robustness_method,
+                    method_display=registry.method_display,
                 ),
                 x_title=f"{test_metric} (Test)",
                 y_title=metric_title,
@@ -3137,8 +3188,12 @@ def _meta_analysis_run_name(args: Any, *, n_test_samples: int) -> str:
         require_namespace_value(args, key="eval_data_seed"),
         key="args.eval_data_seed",
     )
+    scoring_semantics = robustness_scoring_semantics_for_severity_distribution(
+        require_namespace_value(args, key="perturbation_severity_distribution"),
+        key="args.perturbation_severity_distribution",
+    )
     return (
-        f"{prefix}-{test_metric}-{DEGRADATION_SCORING_SEMANTICS}-"
+        f"{prefix}-{test_metric}-{scoring_semantics}-"
         f"eval_data_seed{eval_data_seed_label}-"
         f"n_test_samples{n_test_samples}"
     )
@@ -4372,6 +4427,10 @@ def _build_forecast_extreme_plot_entries(
                 sample_rows=run_df,
                 test_metric=args.test_metric,
                 eval_data_seed=eval_data_seed,
+                severity_distribution=resolve_severity_distribution(
+                    require_namespace_value(args, key="perturbation_severity_distribution"),
+                    key="args.perturbation_severity_distribution",
+                ),
                 runtime_device=runtime_device,
                 runtime_precision=require_namespace_value(args, key="precision"),
             )
@@ -4603,7 +4662,7 @@ def _extract_run_robustness_metrics(
             "base_key": base_key,
             "at_worst_scenario_metric_name": at_worst_scenario_metric_name,
             "robustness_scoring_semantics": (
-                DEGRADATION_SCORING_SEMANTICS
+                eval_context["robustness_scoring_semantics"]
             ),
         }
     return metrics
@@ -7533,6 +7592,10 @@ def meta_analysis(
     coverage_fractions_by_dataset: Mapping[str, Mapping[tuple[str, str], tuple[int, int]]] | None = None,
 ):
     print("Running meta analysis.")
+    unsupported_figure_scenarios = _unsupported_figure_scenarios(
+        args,
+        full_coverage=require_namespace_bool(args, key="full_coverage"),
+    )
     tracking_uri = build_mlflow_tracking_uri(args.logdir)
     mlflow.set_tracking_uri(tracking_uri)
     client = mlflow.MlflowClient()
@@ -7727,13 +7790,22 @@ def meta_analysis(
                 return_context=True,
             )
             eval_context = robustness_context["eval_context"]
+            expected_scoring_semantics = (
+                robustness_scoring_semantics_for_severity_distribution(
+                    require_namespace_value(
+                        args,
+                        key="perturbation_severity_distribution",
+                    ),
+                    key="args.perturbation_severity_distribution",
+                )
+            )
             if (
                 robustness_context["robustness_scoring_semantics"]
-                != DEGRADATION_SCORING_SEMANTICS
+                != expected_scoring_semantics
             ):
                 raise ValueError(
                     "Meta-analysis canonical winner pool only supports "
-                    f"{DEGRADATION_SCORING_SEMANTICS!r} runs. "
+                    f"{expected_scoring_semantics!r} runs. "
                     f"Run {run.info.run_id} uses "
                     f"{robustness_context['robustness_scoring_semantics']!r}."
                 )
@@ -8464,15 +8536,7 @@ def meta_analysis(
         severity_profile_df=severity_profile_df,
     )
 
-    arch_map = {
-        "DLinear": "Fully Connected",
-        "ModernTCN": "Convolution",
-        "GRU": "Recurrent",
-        "PatchTST": "Attention",
-        "TSMixer": "Fully Connected",
-        "SeasonalNaive": "Statistical",
-        "Chronos2": "Foundation",
-    }
+    arch_map = load_benchmark_architecture_families()
 
     # Add architecture_family to all dataframes that need it
     backbone_df = _assign_architecture_families(
@@ -9439,12 +9503,16 @@ def meta_analysis(
                         method_scenario_family_delta_df,
                         method_scenario_family_summary_df,
                     ) = _build_method_scenario_family_delta_tables(
-                        merged_scenarios,
+                        merged_scenarios.iloc[0:0]
+                        if unsupported_figure_scenarios
+                        else merged_scenarios,
                         registry=core_figure_registry,
                         delta_col=delta_col,
                     )
                     core_scenario_heatmap_specs = (
-                        _build_plot_artifact_with_partial_coverage_tolerance(
+                        []
+                        if unsupported_figure_scenarios
+                        else _build_plot_artifact_with_partial_coverage_tolerance(
                             lambda: _build_method_scenario_delta_heatmap_figure_specs(
                                 scenario_delta_df,
                                 args=args,

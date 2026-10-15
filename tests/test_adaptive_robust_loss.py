@@ -531,18 +531,13 @@ class TestRecipeSpec:
         from pipelines.runner import PIPELINE_RECIPE_PATHS_BY_METHOD
         assert "adaptive_robust_loss" in PIPELINE_RECIPE_PATHS_BY_METHOD
 
-    def test_benchmark_recipe_order(self):
-        from config_loader import load_defaults
-        assert "adaptive_robust_loss" in load_defaults()["BENCHMARK_METHODS"]
-
-    def test_selection_recipe_order(self):
-        from config_loader import load_defaults
+    def test_benchmark_scope_loads_the_recipe(self):
         from pipelines.selection import load_benchmark_recipe_specs_for_scope
-        methods = [
-            spec.pipeline_method
-            for spec in load_benchmark_recipe_specs_for_scope(load_defaults())
-        ]
-        assert "adaptive_robust_loss" in methods
+        methods = ["baseline", "adaptive_robust_loss"]
+        specs = load_benchmark_recipe_specs_for_scope(
+            {**load_defaults(), "BENCHMARK_METHODS": methods}
+        )
+        assert [spec.pipeline_method for spec in specs] == methods
 
     @pytest.mark.parametrize("architecture", ["Chronos2", "SeasonalNaive"])
     def test_recipe_rejects_unsupported_benchmark_architectures(self, architecture):

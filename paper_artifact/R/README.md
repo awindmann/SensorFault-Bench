@@ -1,7 +1,8 @@
 # Figure Setup
 
-This optional subartifact renders the polished paper figures from frozen CSV
-inputs. It is separate from the Python benchmark workflow.
+This optional folder renders the figures of the NeurIPS 2026 paper
+"Benchmarking Sensor-Fault Robustness in Forecasting" from fixed CSV inputs,
+independently of the Python benchmark workflow.
 
 ## Folder layout
 
@@ -12,14 +13,13 @@ The figure scripts assume this layout under `paper_artifact/R/`:
 - `figures/`: generated outputs
 - `library/`: optional local R package library
 
-The scripts automatically look for packages in `library/` first, then fall
-back to the normal R library paths. `library/` is a local convenience cache and
-is not distributed. Other users can recreate the package environment with the
-install command below.
+The scripts look for packages in `library/` first and then in the usual R
+library paths. Because the repository does not ship `library/`, the install
+command below recreates it.
 
 ## R packages
 
-Install the union of packages used by the figure scripts:
+The figure scripts use these packages:
 
 - `ggplot2`
 - `dplyr`
@@ -29,7 +29,7 @@ Install the union of packages used by the figure scripts:
 - `scales`
 - `patchwork`
 
-Recommended install command from the repository root:
+Install them from the repository root with:
 
 ```bash
 mkdir -p paper_artifact/R/library
@@ -38,15 +38,14 @@ Rscript -e 'lib <- "paper_artifact/R/library"; dir.create(lib, recursive = TRUE,
 
 ## LaTeX / TikZ tools
 
-Several figures export through `tikzDevice`, so a working TeX installation is required.
-
-Required command-line tools:
+Several figures export through `tikzDevice` and therefore need a working TeX
+installation with these command-line tools:
 
 - `pdflatex`
 - `lualatex`
 - `pdfcrop` for Figure 2
 
-On Debian or Ubuntu, this is a reasonable starting point:
+On Debian or Ubuntu, start with:
 
 ```bash
 sudo apt-get update
@@ -62,33 +61,38 @@ sudo apt-get install -y \
 Notes:
 
 - Figures 2, 5, and 6 compile with `pdflatex`.
-- Figure 3 now exports through TikZ and compiles with `pdflatex`.
-- Figure 4 now exports through TikZ and compiles the final `.tex` with `lualatex`.
-- Figure 4 sets a writable LuaTeX cache automatically at runtime, so no manual cache setup should be needed.
-- Figure 4 can take noticeably longer to compile than the other figures because its TikZ export is large.
+- Figure 3 exports through TikZ and compiles with `pdflatex`.
+- Figure 4 exports through TikZ and compiles the final `.tex` file with
+  `lualatex`.
+- Figure 4 sets up a writable LuaTeX cache at runtime, so the cache needs no
+  manual setup.
+- Because its TikZ export is large, Figure 4 takes longer to compile than the
+  other figures.
 
 ## `pdfcrop` on macOS and Windows
 
-`pdfcrop` is not Linux-only. It is also available on macOS and Windows as part of common TeX distributions.
+The common TeX distributions include `pdfcrop` on macOS and Windows as well as
+on Linux:
 
-- `macOS`: typically available after installing MacTeX
-- `Windows`: typically available after installing TeX Live or MiKTeX
+- macOS: MacTeX
+- Windows: TeX Live or MiKTeX
 
-Quick check:
+Check the installation with:
 
 ```bash
 pdfcrop --version
 ```
 
-If the command is missing, the usual fixes are:
+If the command is missing:
 
 - install a full TeX distribution
 - make sure the TeX binaries are on `PATH`
-- on Windows, reopen the terminal after installation so the updated `PATH` is picked up
+- on Windows, reopen the terminal after installation so the updated `PATH` is
+  picked up
 
 ## Input data locations
 
-Current expected inputs:
+The figures read these inputs:
 
 - Figure 2: `data/backbone_scenario_heatmap_data.csv`
 - Figure 3: `data/forecast_plots_final_traces/...`
@@ -96,17 +100,16 @@ Current expected inputs:
 - Figure 5: `data/main_table_backbone.csv`
 - Figure 6: `data/pgd_trajectory_data.csv`
 
-The forecast trace CSVs include only the forecast windows shown in Figures 3 and 4.
-They are plotting inputs, not full evaluation replay files, and the larger
-per-sample trace outputs from the analysis run are intentionally omitted.
-These bundled trace extracts predate the current replay trace schema and do not
-store a `robustness_method` column. When replaying them with
-`scripts/render_forecast_plots.py from-traces`, pass
-`--missing-robustness-method baseline` explicitly.
+The forecast trace CSVs contain only the forecast windows shown in Figures 3
+and 4. They serve as plotting inputs, so the larger trace outputs per sample of
+the analysis run are left out. Because these traces store no
+`robustness_method` column, replaying them with
+`scripts/render_forecast_plots.py from-traces` needs
+`--missing-robustness-method baseline`.
 
 ## Running the figures
 
-Run from the repo root:
+Run the scripts from the repository root:
 
 ```bash
 Rscript paper_artifact/R/code/Figure_2_backbone_scenario_heatmap.R
@@ -126,3 +129,8 @@ Outputs are written to `paper_artifact/R/figures/`.
 - `Figure_5_backbone_pareto_by_dataset.pdf`
 - `Figure_5_clean_vs_worst_error_by_dataset.pdf`
 - `Figure_6_trajectories.pdf`
+
+## Verification
+
+`paper_artifact/MANIFEST.json` records the SHA-256 checksum and byte size of
+every file in this folder.

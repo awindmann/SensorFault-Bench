@@ -1,0 +1,145 @@
+# configs/cli_help.yaml
+# Help text of the command-line options of run_training.py, run_testing.py,
+# and run_analysis.py. config_loader.build_parser groups the options in this
+# order and raises for an option without an entry here. Default values stay in
+# configs/defaults.yaml and in the recipes under configs/pipelines/.
+
+groups:
+  - title: Scope
+    options:
+      DATA_FILES: Dataset keys to run.
+      DATA_TARGETS: Forecast-target alias per dataset, in the order of --data-files. Empty uses each dataset's default target.
+      MODEL: Architecture keys to run. Without it, --benchmark-architectures applies.
+      BENCHMARK_ARCHITECTURES: Architecture scope when --model is not given.
+      METHOD: Method keys to run. Each method is compared with the baseline of the same architecture, so list baseline with it.
+      BENCHMARK_METHODS: Method scope when --method is not given. Training runs baseline first and the wrapping methods ensemble and randomized_smoothing last.
+
+  - title: Run store
+    options:
+      DATA_ROOT: Directory or s3:// prefix that holds the dataset files.
+      LOGDIR: MLflow tracking store, a local directory or an http(s) URI of a tracking server.
+      MINIO_ENDPOINT: Endpoint of a MinIO or other S3-compatible object store. Leave empty for local files and provider defaults.
+      MLFLOW_EXPERIMENT_PREFIX: Prefix of the MLflow experiments, one per dataset. Training, testing, and analysis need the same prefix.
+      SAVE_CHECKPOINT: Store the best checkpoint of each training run. Testing loads these checkpoints.
+      RERUN: Training deletes existing runs with the same signature and runs them again, whereas testing evaluates already tested models again without deleting runs. Analysis ignores this option.
+      RAISE_ERROR: Stop at the first failed configuration. --no-raise-error continues with the next one.
+      LOG_EVERY_N_STEPS: Training steps between logged metrics.
+
+  - title: Windows and splits
+    options:
+      INPUT_LEN: Input window length in time steps. Give it together with --target-len to override the dataset values in configs/dataset_windows.yaml.
+      TARGET_LEN: Forecast horizon in time steps. Give it together with --input-len to override the dataset values in configs/dataset_windows.yaml.
+      N_TRAIN_SAMPLES: Number of windows sampled from the training split.
+      N_VAL_SAMPLES: Number of windows sampled from the validation split.
+      TRAIN_SPLIT: Fraction of the data used for training. Temporal datasets take it from the start of the series.
+      VAL_SPLIT: Fraction of the data used for validation. The test part takes the rest.
+      PURGED_FRACTION: Fraction removed from the start of the validation and test parts, which leaves a gap after the preceding part. Windows never cross part boundaries, even without purging. Split mode across_batches ignores it.
+      SHUFFLE_BATCHES_BEFORE_SPLIT: Shuffle the batches of a dataset with split mode across_batches before splitting.
+      STRICT_IID: Sample non-overlapping windows in blocks.
+
+  - title: Training and search
+    options:
+      MAX_HP_TRIALS_PER_MODEL: Maximum number of configurations that training draws from the search grid per architecture and method. The wrapping methods ensemble and randomized_smoothing run their full grids. Testing and analysis need the same value to find the trained runs.
+      MAX_EPOCHS: Maximum number of training epochs.
+      EARLY_STOPPING: Stop training when the validation loss stops improving.
+      EARLY_STOPPING_PATIENCE: Epochs without improvement before early stopping.
+      LOSS: Training loss, one of MSE, MAE, MAPE, or SMAPE. PGD adversarial training accepts only MSE or MAE, while the adaptive robust loss recipe trains with its own loss.
+      OPTIMIZER: Optimizer of trainable models. Only Adam is supported.
+      OPTIMIZER_BETA1: First Adam moment coefficient.
+      OPTIMIZER_BETA2: Second Adam moment coefficient.
+      OPTIMIZER_WEIGHT_DECAY: Adam weight decay.
+      OPTIMIZER_EPS: Adam epsilon.
+      LR_SCHEDULER: Reduce the learning rate when the validation loss plateaus.
+      SCHEDULER_TYPE: Learning-rate scheduler. Only plateau is supported.
+      SCHEDULER_FACTOR: Factor that multiplies the learning rate at each reduction.
+      SCHEDULER_PATIENCE: Epochs without improvement before the learning rate is reduced.
+      SCHEDULER_MIN_LR: Lower bound of the learning rate.
+
+  - title: Hardware
+    options:
+      BATCH_SIZE: Batch size. Overrides the dataset value in configs/dataset_windows.yaml.
+      PRECISION: Numerical precision of training, passed to PyTorch Lightning.
+      NUM_WORKERS: Data loader worker processes. Use 0 when workers fail with shared-memory errors.
+      ACCELERATOR: Accelerator passed to PyTorch Lightning, for example auto, cpu, or gpu.
+      DEVICES: Number of devices. The benchmark trains on one device.
+
+  - title: Seeds
+    options:
+      SEED: Master seed. The data, model, search, and evaluation seeds derive from it.
+      DATA_SPLIT_SEED: Separate base for the data seed, which draws the sampled windows. Without it, the data seed derives from --seed.
+      EVAL_DATA_SEED: Seed of the sampled test windows and the fault randomness. Without it, testing uses the data seed of the selected run.
+
+  - title: Evaluation
+    options:
+      N_TEST_SAMPLES: Number of test windows sampled for evaluation. The default configuration uses 10000.
+      PERTURBATION_SCENARIOS: Scored fault scenarios in benchmark order. Exact ties of the worst scenario break in this order.
+      PERTURBATION_SEVERITY_DISTRIBUTION: Distribution of the test severity, uniform or beta_1_2.
+      PERTURBATION_CHANNEL_FRACTION_MAX: Largest fraction of eligible channels that one fault affects, reached at severity 1. The channel count rounds up, so 0.5 of three channels allows two. Faults on all channels, such as missing_data, ignore it.
+      FIXED_CHANNEL_FRACTION: Fraction of affected channels at every severity in a separate sensitivity evaluation, at most --perturbation-channel-fraction-max. Testing requires the completed evaluation of each selected model and leaves its results unchanged.
+      TEST_METRIC: Error metric of the evaluation, one of MSE, MAE, MAPE, or SMAPE.
+      IMPROVEMENT_SELECTION_MODE: Validation criterion that selects method variants. The benchmark uses clean. perturbed_worst and perturbed_mean select on validation error under faults.
+      REFRESH_SELECTION_METRICS: Recompute the stored validation metrics that select method variants. The best_val_loss of training runs is never recomputed, so clean selection among trained variants stays unchanged.
+      FULL_COVERAGE: Raise when a requested run is missing. Without it, testing and analysis report and drop each incomplete architecture, method family, or variant. Testing with --method still raises when the drops remove every variant of a listed method for an architecture.
+      BOOTSTRAP_CI_RESAMPLES: Number of bootstrap resamples of each interval.
+      BOOTSTRAP_CI_CONFIDENCE_LEVEL: Confidence level of the bootstrap intervals.
+
+  - title: Analysis
+    options:
+      REFERENCE_NORMALIZATION_ANCHOR_MODEL: Architecture that anchors the reference-normalized diagnostics.
+      FORECAST_EXTREMES: Render forecast plots of the faulty test windows with the largest and the smallest error of each selected model.
+      FORECAST_EXTREME_TOP_K: Number of faulty test windows with the largest and with the smallest errors that the forecast_extremes table keeps for each selected model. The plots show only the first window of each kind.
+      EPS: Small constant that keeps ratios finite.
+
+  - title: Randomized training recipe
+    description: Each option fixes one parameter of configs/pipelines/randomized_training.yaml instead of searching its grid.
+    options:
+      SMOOTHING_NOISE_STD: Standard deviation of the relative Gaussian noise applied to training inputs.
+      SMOOTHING_NOISE_CHANNELS: Channels that receive the noise, one of target_only, continuous, or all.
+
+  - title: PGD adversarial training recipe
+    description: Each option fixes one parameter of configs/pipelines/adversarial_training.yaml instead of searching its grid.
+    options:
+      ADVTRAIN_EPSILON: Radius of the L-infinity ball of the attack on standardized inputs.
+      ADVTRAIN_STEP_SIZE: Step size of each attack step.
+      ADVTRAIN_ATTACK_STEPS: Number of attack steps.
+      ADVTRAIN_RANDOM_START: Start the attack from a random point inside the ball.
+      ADVTRAIN_ATTACK_CHANNELS: Channels the attack may change, all or continuous.
+
+  - title: Adaptive robust loss recipe
+    description: Each option fixes one parameter of configs/pipelines/adaptive_robust_loss.yaml instead of searching its grid.
+    options:
+      RLOSS_ALPHA_LO: Lower bound of the shape parameter alpha.
+      RLOSS_ALPHA_HI: Upper bound of the shape parameter alpha.
+      RLOSS_ALPHA_INIT: Initial value of alpha.
+      RLOSS_SCALE_LO: Lower bound of the scale parameter.
+      RLOSS_SCALE_INIT: Initial value of the scale parameter.
+      RLOSS_PARAM_SCOPE: Granularity of alpha and scale. Only per_horizon_feature is supported.
+
+  - title: Ensemble recipe
+    description: Each option fixes one parameter of configs/pipelines/ensemble.yaml instead of searching its grid.
+    options:
+      ENSEMBLE_TOP_K: Number of baseline models, ranked by validation loss, that the ensemble combines.
+      ENSEMBLE_COMBINE_METHOD: Aggregation of the member forecasts, median or mean.
+      ENSEMBLE_SCOPE: Pool of ensemble members. per_architecture draws them from the runs of one architecture.
+
+  - title: Randomized smoothing recipe
+    description: Each option fixes one parameter of configs/pipelines/randomized_smoothing.yaml instead of searching its grid.
+    options:
+      RS_NOISE_STD: Standard deviation of the Gaussian noise added to standardized inputs.
+      RS_SAMPLE_COUNT: Number of noisy forecasts per input window.
+      RS_BACKBONE_METHOD: Method whose selected model is smoothed.
+      RS_TRIM_ALPHA: Fraction of the noisy forecasts removed from each end before averaging.
+
+  - title: Fault augmentation recipe
+    description: Each option fixes one parameter of configs/pipelines/fault_augmentation.yaml instead of searching its grid.
+    options:
+      TRAIN_PERTURBATION_PROFILE: Profile of transfer fault families in the recipe that supplies the training faults.
+      TRAIN_PERTURBATION_PROBABILITY: Probability that a training window receives a fault.
+      TRAIN_PERTURBATION_SEVERITY_MAX: Upper bound of the uniform training severity.
+      TRAIN_PERTURBATION_CHANNEL_FRACTION_MAX: Largest fraction of eligible channels that one training fault affects. The channel count rounds up, as for --perturbation-channel-fraction-max.
+
+  - title: RevIN recipe
+    description: Each option fixes one parameter of configs/pipelines/revin.yaml instead of searching its grid.
+    options:
+      REVIN_AFFINE: Learn the affine parameters of reversible instance normalization.
+      REVIN_EPS: Numerical stability constant of the normalization.

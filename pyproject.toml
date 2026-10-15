@@ -1,10 +1,18 @@
 [project]
 name = "sensorfault-bench"
-version = "0.1.0"
-description = "SensorFault-Bench: robustness benchmarking for time series forecasting under sensor faults."
+version = "1.0.0"
+description = "Robustness evaluation of time series forecasting under sensor faults in cyber-physical systems."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [
+    { name = "Alexander Windmann" },
+    { name = "Philipp Wittenberg" },
+    { name = "Gianluca Manca" },
+    { name = "Marcel Dix" },
+    { name = "Jens U. Brandt" },
+    { name = "Oliver Niggemann" },
+]
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "accelerate>=0.34,<2",
@@ -26,11 +34,18 @@ dependencies = [
     "transformers>=4.41,<5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/awindmann/SensorFault-Bench"
+Repository = "https://github.com/awindmann/SensorFault-Bench"
+Paper = "https://neurips.cc/virtual/2026/loc/paris/poster/138912"
+Documentation = "https://github.com/awindmann/SensorFault-Bench/tree/main/docs"
+
 [dependency-groups]
 dev = [
     "ipykernel>=6.29,<7",
     "pytest>=7.4,<9",
     "ruff>=0.11,<0.12",
+    "tomli>=2,<3; python_version < '3.11'",
 ]
 
 [tool.ruff]

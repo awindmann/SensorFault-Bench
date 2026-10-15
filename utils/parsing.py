@@ -5,8 +5,9 @@ import copy
 import hashlib
 import json
 import math
-from decimal import Decimal
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from numbers import Integral
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -28,6 +29,7 @@ BOOTSTRAP_CI_SEMANTICS = "cell_stratified_percentile"
 SHARED_ANCHOR_BOOTSTRAP_CI_SEMANTICS = "shared_anchor_percentile"
 METHOD_DELTA_PAIR_BOOTSTRAP_CI_SEMANTICS = "method_delta_pair_percentile"
 DEGRADATION_SCORING_SEMANTICS = "uniform_severity_degradation"
+PERTURBATION_SEVERITY_DISTRIBUTIONS = ("uniform", "beta_1_2")
 ROBUSTNESS_RESULTS_COMPLETE_TAG = "robustness_results_complete"
 IMPROVEMENT_SELECTION_MODES = ("clean", "perturbed_worst", "perturbed_mean")
 SELECTION_METRIC_SEMANTICS = "perturbed_validation_error"
@@ -44,6 +46,13 @@ class CoreFigureRegistry:
     scenario_display_order: tuple[str, ...]
     scenario_display: dict[str, str]
     scenario_groups: dict[str, tuple[str, ...]]
+
+
+@dataclass(frozen=True)
+class CliHelpGroup:
+    title: str
+    description: str | None
+    options: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -1061,6 +1070,37 @@ def parse_method_architecture_applicability(
     return parsed
 
 
+def parse_architecture_families(
+    value: Any,
+    *,
+    benchmark_architectures: Sequence[str],
+    key: str = "architectures.families",
+) -> dict[str, str]:
+    """Validate the architecture-family label of every benchmark architecture."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{key} must be a mapping from architecture to family.")
+    architectures = parse_canonical_choice_list(
+        list(benchmark_architectures),
+        key="benchmark_architectures",
+        allowed=benchmark_architectures,
+    )
+    missing = [architecture for architecture in architectures if architecture not in value]
+    if missing:
+        raise ValueError(f"{key} is missing architecture(s): {', '.join(missing)}.")
+    unknown = sorted(str(architecture) for architecture in value if architecture not in architectures)
+    if unknown:
+        raise ValueError(f"{key} contains unknown architecture(s): {', '.join(unknown)}.")
+    return {
+        architecture: parse_required_nonempty_string(
+            value[architecture],
+            key=f"{key}.{architecture}",
+            context="Architecture family",
+            disallow_none_token=True,
+        )
+        for architecture in architectures
+    }
+
+
 def resolve_applicable_method_architecture_scope(
     *,
     methods: Sequence[str],
@@ -1357,65 +1397,6 @@ def resolve_meta_analysis_eval_data_seed_scope(
         )
     resolved_mode = "canonical" if resolved_seed is None else str(int(resolved_seed))
     return resolved_seed, resolved_mode
-
-
-def require_meta_analysis_eval_data_seed_scope_tags(
-    tags: Mapping[str, Any],
-    *,
-    run_id: str,
-) -> tuple[Optional[int], str]:
-    """Extract meta-analysis eval-seed scope tags.
-
-    Canonical meta-analysis runs may carry an optional ``eval_data_seed`` tag from
-    older logged metadata, but the persisted ``eval_data_seed_mode`` remains the
-    authoritative scope signal.
-    """
-    if tags is None:
-        raise ValueError(
-            f"Run {run_id} is missing tags required for meta-analysis eval-seed scope."
-        )
-    mode_raw = tags.get("eval_data_seed_mode")
-    if mode_raw is None or not str(mode_raw).strip():
-        raise ValueError(f"Run {run_id} eval_data_seed_mode is required.")
-    mode = str(mode_raw).strip()
-    if mode == "canonical":
-        parse_eval_data_seed(
-            tags.get("eval_data_seed"),
-            key="eval_data_seed",
-        )
-        return None, "canonical"
-
-    try:
-        expected_seed = parse_eval_data_seed(
-            mode,
-            key="eval_data_seed_mode",
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Run {run_id} has invalid eval_data_seed_mode tag {mode!r}; "
-            "expected 'canonical' or an integer seed."
-        ) from exc
-    if expected_seed is None:
-        raise ValueError(
-            f"Run {run_id} has invalid eval_data_seed_mode tag {mode!r}; "
-            "expected 'canonical' or an integer seed."
-        )
-
-    actual_seed = parse_eval_data_seed(
-        tags.get("eval_data_seed"),
-        key="eval_data_seed",
-    )
-    if actual_seed is None:
-        raise ValueError(
-            f"Run {run_id} has eval_data_seed_mode={mode!r} but is missing "
-            "required eval_data_seed tag."
-        )
-    if actual_seed != expected_seed:
-        raise ValueError(
-            f"Run {run_id} has eval_data_seed_mode={mode!r} but eval_data_seed="
-            f"{actual_seed}; expected {expected_seed}."
-        )
-    return int(actual_seed), str(int(expected_seed))
 
 
 def parse_bootstrap_ci_resamples(
@@ -1828,6 +1809,14 @@ def require_degradation_eval_context_from_args(
         require_namespace_value(args, key="perturbation_scenarios", context=context),
         key=f"{context}.perturbation_scenarios",
     )
+    perturbation_severity_distribution = parse_perturbation_severity_distribution(
+        require_namespace_value(
+            args,
+            key="perturbation_severity_distribution",
+            context=context,
+        ),
+        key=f"{context}.perturbation_severity_distribution",
+    )
     strict_iid = require_namespace_bool(args, key="strict_iid", context=context)
     if strict_iid:
         raise ValueError(
@@ -1839,7 +1828,12 @@ def require_degradation_eval_context_from_args(
         idx: name for idx, name in enumerate(perturbation_scenarios)
     }
     return {
-        "robustness_scoring_semantics": DEGRADATION_SCORING_SEMANTICS,
+        "robustness_scoring_semantics": (
+            robustness_scoring_semantics_for_severity_distribution(
+                perturbation_severity_distribution,
+                key=f"{context}.perturbation_severity_distribution",
+            )
+        ),
         "test_metric": test_metric,
         "eval_data_seed": int(parsed_eval_data_seed),
         "n_test_samples": int(n_test_samples),
@@ -1876,6 +1870,14 @@ def require_selection_perturbation_context_from_args(
     )
     return {
         "selection_metric_semantics": SELECTION_METRIC_SEMANTICS,
+        "selection_perturbation_severity_distribution": parse_perturbation_severity_distribution(
+            require_namespace_value(
+                args,
+                key="perturbation_severity_distribution",
+                context=context,
+            ),
+            key=f"{context}.perturbation_severity_distribution",
+        ),
         "selection_perturbation_channel_fraction_max": float(
             perturbation_channel_fraction_max
         ),
@@ -1904,6 +1906,10 @@ def _parse_selection_perturbation_context(
         )
     return {
         "selection_metric_semantics": semantics,
+        "selection_perturbation_severity_distribution": parse_perturbation_severity_distribution(
+            context.get("selection_perturbation_severity_distribution"),
+            key=f"{context_name}.selection_perturbation_severity_distribution",
+        ),
         "selection_perturbation_channel_fraction_max": parse_perturbation_channel_fraction_max(
             context.get("selection_perturbation_channel_fraction_max"),
             key=f"{context_name}.selection_perturbation_channel_fraction_max",
@@ -1927,6 +1933,9 @@ def build_selection_perturbation_context_tag_payload(
     )
     return {
         "selection_metric_semantics": parsed_context["selection_metric_semantics"],
+        "selection_perturbation_severity_distribution": parsed_context[
+            "selection_perturbation_severity_distribution"
+        ],
         "selection_perturbation_channel_fraction_max": str(
             float(parsed_context["selection_perturbation_channel_fraction_max"])
         ),
@@ -1973,6 +1982,14 @@ def selection_perturbation_context_matches(
             continue
         if key == "selection_metric_semantics":
             if str(context.get(key)).strip() != str(expected_value).strip():
+                return False
+            continue
+        if key == "selection_perturbation_severity_distribution":
+            expected_distribution = parse_perturbation_severity_distribution(
+                expected_value,
+                key="expected selection_perturbation_severity_distribution",
+            )
+            if context.get(key) != expected_distribution:
                 return False
             continue
         raise ValueError(f"Unsupported selection perturbation context key '{key}'.")
@@ -2181,15 +2198,10 @@ def build_degradation_eval_context_tag_payload(
     """Normalize degradation evaluation identity for MLflow tag logging."""
     if not isinstance(context, Mapping):
         raise ValueError(f"{context_name} must be a mapping.")
-    semantics_raw = context.get("robustness_scoring_semantics")
-    if semantics_raw is None or not str(semantics_raw).strip():
-        raise ValueError(f"{context_name}.robustness_scoring_semantics is required.")
-    semantics = str(semantics_raw).strip()
-    if semantics != DEGRADATION_SCORING_SEMANTICS:
-        raise ValueError(
-            f"{context_name}.robustness_scoring_semantics must be "
-            f"{DEGRADATION_SCORING_SEMANTICS!r}; got {semantics!r}."
-        )
+    semantics = parse_robustness_scoring_semantics(
+        context.get("robustness_scoring_semantics"),
+        key=f"{context_name}.robustness_scoring_semantics",
+    )
     test_metric = parse_optional_nonempty_string(
         context.get("test_metric"),
         key=f"{context_name}.test_metric",
@@ -2381,10 +2393,9 @@ def degradation_eval_context_matches(
                 return False
             continue
         if key == "robustness_scoring_semantics":
-            expected_semantics = parse_required_choice(
+            expected_semantics = parse_robustness_scoring_semantics(
                 expected_value,
                 key="expected robustness_scoring_semantics",
-                allowed=(DEGRADATION_SCORING_SEMANTICS,),
             )
             if context.get(key) != expected_semantics:
                 return False
@@ -2433,74 +2444,6 @@ def degradation_n_test_samples_meet_policy(
     if actual == expected:
         return True
     return False
-
-
-def build_export_manifest_eval_context(
-    defaults: Mapping[str, Any],
-    *,
-    n_test_samples: Any,
-    context_name: str = "export_manifest_eval_context",
-) -> dict[str, Any]:
-    """Normalize the export-manifest degradation context from resolved defaults."""
-    if not isinstance(defaults, Mapping):
-        raise ValueError(f"{context_name} defaults must be a mapping.")
-
-    def _require_defaults_key(key: str) -> Any:
-        if key not in defaults:
-            raise ValueError(
-                f"{context_name} defaults are missing required '{key}'."
-            )
-        return defaults[key]
-
-    test_metric = parse_optional_nonempty_string(
-        _require_defaults_key("TEST_METRIC"),
-        key=f"{context_name}.TEST_METRIC",
-        context="Export manifest eval context",
-        disallow_none_token=True,
-    )
-    if test_metric is None:
-        raise ValueError(f"{context_name}.TEST_METRIC is required.")
-
-    bootstrap_ci_resamples = parse_bootstrap_ci_resamples(
-        _require_defaults_key("BOOTSTRAP_CI_RESAMPLES"),
-        key=f"{context_name}.BOOTSTRAP_CI_RESAMPLES",
-    )
-    if bootstrap_ci_resamples is None:
-        raise ValueError(f"{context_name}.BOOTSTRAP_CI_RESAMPLES is required.")
-
-    bootstrap_ci_confidence_level = parse_bootstrap_ci_confidence_level(
-        _require_defaults_key("BOOTSTRAP_CI_CONFIDENCE_LEVEL"),
-        key=f"{context_name}.BOOTSTRAP_CI_CONFIDENCE_LEVEL",
-    )
-    if bootstrap_ci_confidence_level is None:
-        raise ValueError(
-            f"{context_name}.BOOTSTRAP_CI_CONFIDENCE_LEVEL is required."
-        )
-
-    return {
-        "robustness_scoring_semantics": DEGRADATION_SCORING_SEMANTICS,
-        "test_metric": test_metric,
-        "n_test_samples": parse_required_positive_int(
-            n_test_samples,
-            key=f"{context_name}.n_test_samples",
-        ),
-        "eval_data_seed": parse_eval_data_seed(
-            _require_defaults_key("EVAL_DATA_SEED"),
-            key=f"{context_name}.EVAL_DATA_SEED",
-        ),
-        "perturbation_channel_fraction_max": parse_perturbation_channel_fraction_max(
-            _require_defaults_key("PERTURBATION_CHANNEL_FRACTION_MAX"),
-            key=f"{context_name}.PERTURBATION_CHANNEL_FRACTION_MAX",
-        ),
-        "perturbation_scenarios": list(
-            parse_perturbation_scenarios(
-                _require_defaults_key("PERTURBATION_SCENARIOS"),
-                key=f"{context_name}.PERTURBATION_SCENARIOS",
-            )
-        ),
-        "bootstrap_ci_resamples": int(bootstrap_ci_resamples),
-        "bootstrap_ci_confidence_level": float(bootstrap_ci_confidence_level),
-    }
 
 
 def require_tsmixer_hparams(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -2953,6 +2896,53 @@ def parse_perturbation_channel_fraction_max(
 ) -> float:
     """Parse and validate maximum affected-channel fraction."""
     return _parse_required_positive_bounded_float(value, key=key, max_value=1.0)
+
+
+def parse_perturbation_severity_distribution(
+    value: Any,
+    *,
+    key: str = "perturbation_severity_distribution",
+) -> str:
+    """Parse the exact evaluation severity-distribution identifier."""
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string.")
+    if value not in PERTURBATION_SEVERITY_DISTRIBUTIONS:
+        supported = ", ".join(repr(item) for item in PERTURBATION_SEVERITY_DISTRIBUTIONS)
+        raise ValueError(
+            f"Unsupported {key} {value!r}. Supported: [{supported}]."
+        )
+    return value
+
+
+def robustness_scoring_semantics_for_severity_distribution(
+    value: Any,
+    *,
+    key: str = "perturbation_severity_distribution",
+) -> str:
+    """Build degradation scoring semantics from the parsed severity sampling distribution."""
+    distribution_id = parse_perturbation_severity_distribution(value, key=key)
+    return f"{distribution_id}_severity_degradation"
+
+
+def parse_robustness_scoring_semantics(
+    value: Any,
+    *,
+    key: str = "robustness_scoring_semantics",
+) -> str:
+    """Parse a scoring-semantics id backed by a supported severity sampling distribution."""
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string.")
+    semantics = value.strip()
+    allowed = tuple(
+        robustness_scoring_semantics_for_severity_distribution(distribution_id)
+        for distribution_id in PERTURBATION_SEVERITY_DISTRIBUTIONS
+    )
+    if semantics not in allowed:
+        supported = ", ".join(repr(item) for item in allowed)
+        raise ValueError(
+            f"Unsupported {key} {value!r}. Supported: [{supported}]."
+        )
+    return semantics
 
 
 def parse_optional_unit_float(
@@ -3577,23 +3567,6 @@ def _require_perturbation_coupling_mapping(
     }
 
 
-def require_perturbation_coupling_params(
-    params: Mapping[str, Any],
-    *,
-    run_id: str,
-    expected_max: Any | None = None,
-    expected_scenarios_signature: Any | None = None,
-) -> dict[str, Any]:
-    """Parse required perturbation-coupling params and enforce optional expectations."""
-    return _require_perturbation_coupling_mapping(
-        params,
-        run_id=run_id,
-        source_name="params",
-        expected_max=expected_max,
-        expected_scenarios_signature=expected_scenarios_signature,
-    )
-
-
 def require_perturbation_coupling_tags(
     tags: Mapping[str, Any],
     *,
@@ -3733,41 +3706,49 @@ def require_typed_tag_or_param_value(
     )
 
 
-def parse_semicolon_delimited_strings(
+def parse_cli_help_config(
     value: Any,
     *,
-    key: str,
-    context: str | None = None,
-) -> tuple[str, ...]:
-    """Parse optional semicolon-delimited string metadata."""
-    subject = context if context else "Value"
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        normalized = value.strip()
-        if not normalized:
-            return ()
-        raw_items = normalized.split(";")
-    elif isinstance(value, (list, tuple)):
-        raw_items = list(value)
-        if not raw_items:
-            return ()
-    else:
-        raise ValueError(
-            f"{subject} has invalid {key}; expected semicolon-delimited string or string sequence."
+    key: str = "configs/cli_help.yaml",
+) -> tuple[CliHelpGroup, ...]:
+    """Parse the grouped help text of the command-line options."""
+    if not isinstance(value, Mapping) or set(value) != {"groups"}:
+        raise ValueError(f"{key} must be a mapping with the single key 'groups'.")
+    raw_groups = value["groups"]
+    if not isinstance(raw_groups, list) or not raw_groups:
+        raise ValueError(f"{key}.groups must be a non-empty list.")
+    groups: list[CliHelpGroup] = []
+    seen_options: set[str] = set()
+    for index, raw_group in enumerate(raw_groups):
+        context = f"{key}.groups[{index}]"
+        if not isinstance(raw_group, Mapping):
+            raise ValueError(f"{context} must be a mapping.")
+        unknown = sorted(set(raw_group) - {"title", "description", "options"})
+        if unknown:
+            raise ValueError(f"{context} has unsupported key(s): {', '.join(unknown)}.")
+        title = parse_required_nonempty_string(
+            raw_group.get("title"),
+            key=f"{context}.title",
         )
-
-    items: list[str] = []
-    for idx, raw_item in enumerate(raw_items):
-        item = parse_optional_nonempty_string(
-            raw_item,
-            key=f"{key}[{idx}]",
-            context=subject,
+        description = parse_optional_nonempty_string(
+            raw_group.get("description"),
+            key=f"{context}.description",
         )
-        if item is None:
-            raise ValueError(f"{subject} has invalid {key}[{idx}].")
-        items.append(item)
-    return tuple(items)
+        raw_options = raw_group.get("options")
+        if not isinstance(raw_options, Mapping) or not raw_options:
+            raise ValueError(f"{context}.options must be a non-empty mapping.")
+        options: dict[str, str] = {}
+        for option, help_text in raw_options.items():
+            option_key = parse_required_nonempty_string(option, key=f"{context}.options key")
+            if option_key in seen_options:
+                raise ValueError(f"{key} lists option '{option_key}' more than once.")
+            seen_options.add(option_key)
+            options[option_key] = parse_required_nonempty_string(
+                help_text,
+                key=f"{context}.options.{option_key}",
+            )
+        groups.append(CliHelpGroup(title=title, description=description, options=options))
+    return tuple(groups)
 
 
 def parse_named_display_string_pairs(
@@ -4132,6 +4113,44 @@ def parse_core_figure_registry_config(
         scenario_display=scenario_display,
         scenario_groups=scenario_groups,
     )
+
+
+def scenarios_outside_figure_registry(
+    scenarios: Sequence[Any],
+    *,
+    registry_scenarios: Sequence[str],
+    context: str,
+) -> tuple[str, ...]:
+    """Return configured scenario ids the figure-registry vocabulary does not define.
+
+    Figures keyed by scenario identity can only render ids that carry a registry
+    display label and family. Configured subsets of the registry stay renderable
+    and return an empty tuple, so only ids the registry cannot express are
+    reported, in sorted order.
+    """
+    registry_scenario_set = {
+        parse_required_nonempty_string(
+            registry_scenario,
+            key=f"registry_scenarios[{idx}]",
+            context=context,
+            disallow_none_token=True,
+        )
+        for idx, registry_scenario in enumerate(registry_scenarios)
+    }
+    if not registry_scenario_set:
+        raise ValueError(f"{context} has an empty figure-registry scenario vocabulary.")
+    configured = {
+        parse_required_nonempty_string(
+            scenario,
+            key=f"scenarios[{idx}]",
+            context=context,
+            disallow_none_token=True,
+        )
+        for idx, scenario in enumerate(scenarios)
+    }
+    if not configured:
+        raise ValueError(f"{context} has an empty configured scenario list.")
+    return tuple(sorted(configured - registry_scenario_set))
 
 
 def parse_optional_nonempty_string(
@@ -4584,72 +4603,6 @@ def parse_winner_candidate_tags(
     return best_model, backbone_current
 
 
-def require_robustness_scoring_semantics_tag(
-    tags: dict[str, Any],
-    *,
-    run_id: str,
-    expected: str = DEGRADATION_SCORING_SEMANTICS,
-) -> str:
-    """Require explicit robustness scoring semantics tag and exact value."""
-    raw = tags.get("robustness_scoring_semantics")
-    if raw is None or not str(raw).strip():
-        raise ValueError(
-            f"Run {run_id} is missing required robustness_scoring_semantics tag."
-        )
-    value = str(raw).strip()
-    if value != expected:
-        raise ValueError(
-            f"Run {run_id} has robustness_scoring_semantics='{value}' but expected '{expected}'."
-        )
-    return value
-
-
-def parse_scenario_metric_key(
-    metric_key: str,
-    *,
-    scenario_prefix: str,
-    run_id: str,
-) -> Optional[tuple[int, str]]:
-    """Parse ``scenario/<pert_idx>/<metric_label>`` metric keys."""
-    if not metric_key.startswith(scenario_prefix):
-        return None
-
-    remainder = metric_key[len(scenario_prefix):]
-    if "/" not in remainder:
-        raise ValueError(
-            f"Run {run_id} has malformed scenario metric key '{metric_key}'. "
-            "Expected suffix '<pert_idx>/<metric_label>'."
-        )
-    scenario_token, metric_label = remainder.split("/", 1)
-    scenario_token = str(scenario_token).strip()
-    if not scenario_token:
-        raise ValueError(
-            f"Run {run_id} has malformed scenario metric key '{metric_key}'. "
-            "Expected scenario/<pert_idx>/... with integer pert_idx."
-        )
-    try:
-        scenario_idx = int(scenario_token)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Run {run_id} has malformed scenario metric key '{metric_key}'. "
-            "Expected scenario/<pert_idx>/... with integer pert_idx."
-        ) from exc
-    if scenario_idx < 0:
-        raise ValueError(
-            f"Run {run_id} has malformed scenario metric key '{metric_key}'. "
-            "Expected scenario/<pert_idx>/... with non-negative pert_idx."
-        )
-
-    metric_label = str(metric_label).strip()
-    if not metric_label:
-        raise ValueError(
-            f"Run {run_id} has malformed scenario metric key '{metric_key}'. "
-            "Missing metric label suffix."
-        )
-
-    return scenario_idx, metric_label
-
-
 def parse_dropout_value(raw_value: Any, *, tol: float = 1e-8) -> float | None:
     """Parse a dropout value, returning None for missing/unparseable values."""
     try:
@@ -4670,6 +4623,278 @@ def require_tested_param(params: dict[str, Any], *, run_id: str) -> bool:
         key="'tested' param",
         context=f"Run {run_id}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Compute-accounting registry and recorded-value helpers
+# ---------------------------------------------------------------------------
+
+COMPUTE_ACCOUNTING_CONFIG_FIELDS: tuple[str, ...] = ("campaigns", "analyses")
+COMPUTE_CAMPAIGN_FIELDS: tuple[str, ...] = ("id", "overrides")
+COMPUTE_PAPER_ANALYSIS_FIELDS: tuple[str, ...] = ("id", "campaign", "anchor_window")
+
+
+@dataclass(frozen=True)
+class ComputeCampaign:
+    campaign_id: str
+    overrides: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ComputePaperAnalysis:
+    analysis_id: str
+    campaign_id: str
+    window_start_ms: int
+    window_end_ms: int
+
+
+def parse_compute_accounting_config(
+    raw: Any,
+    *,
+    defaults: Mapping[str, Any],
+) -> tuple[tuple[ComputeCampaign, ...], tuple[ComputePaperAnalysis, ...]]:
+    """Parse the compute-accounting config into its campaigns and paper analyses."""
+    if not isinstance(raw, Mapping) or set(raw) != set(COMPUTE_ACCOUNTING_CONFIG_FIELDS):
+        raise ValueError(
+            "Compute accounting config must be a mapping with exactly the keys "
+            f"{list(COMPUTE_ACCOUNTING_CONFIG_FIELDS)}."
+        )
+    campaigns = parse_compute_campaigns(raw["campaigns"], defaults=defaults)
+    analyses = parse_compute_paper_analyses(
+        raw["analyses"],
+        campaign_ids=[campaign.campaign_id for campaign in campaigns],
+    )
+    return campaigns, analyses
+
+
+def parse_compute_campaigns(
+    raw: Any,
+    *,
+    defaults: Mapping[str, Any],
+) -> tuple[ComputeCampaign, ...]:
+    """Parse the compute-accounting campaign registry.
+
+    Each campaign maps ``defaults.yaml`` keys to the values it was run with.
+    Its experiments are ``<MLFLOW_EXPERIMENT_PREFIX>-<dataset>`` for every
+    ``DATA_FILES`` entry, and no experiment may belong to two campaigns.
+    """
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("Compute accounting 'campaigns' must be a non-empty list.")
+    campaigns: list[ComputeCampaign] = []
+    experiment_owners: dict[str, str] = {}
+    for idx, entry in enumerate(raw):
+        context = f"Compute campaign at index {idx}"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{context} must be a mapping.")
+        missing = [field for field in COMPUTE_CAMPAIGN_FIELDS if field not in entry]
+        unknown = sorted(
+            str(field) for field in entry if field not in COMPUTE_CAMPAIGN_FIELDS
+        )
+        if missing or unknown:
+            raise ValueError(
+                f"{context} must have exactly the fields "
+                f"{list(COMPUTE_CAMPAIGN_FIELDS)}: missing {missing}, unknown {unknown}."
+            )
+        campaign_id = parse_required_nonempty_string(entry["id"], key="id", context=context)
+        if any(campaign.campaign_id == campaign_id for campaign in campaigns):
+            raise ValueError(f"Duplicate compute campaign id '{campaign_id}'.")
+        context = f"Compute campaign '{campaign_id}'"
+        overrides = entry["overrides"]
+        if not isinstance(overrides, Mapping) or not overrides:
+            raise ValueError(f"{context} overrides must be a non-empty mapping.")
+        unknown_keys = sorted(str(key) for key in overrides if key not in defaults)
+        if unknown_keys:
+            raise ValueError(
+                f"{context} overrides unknown defaults.yaml key(s): "
+                f"{', '.join(unknown_keys)}."
+            )
+        resolved = {**defaults, **overrides}
+        prefix = parse_required_nonempty_string(
+            resolved["MLFLOW_EXPERIMENT_PREFIX"],
+            key="MLFLOW_EXPERIMENT_PREFIX",
+            context=context,
+        )
+        datasets = parse_required_string_sequence(
+            resolved["DATA_FILES"],
+            key="DATA_FILES",
+            context=context,
+        )
+        for dataset in datasets:
+            experiment_name = f"{prefix}-{dataset}"
+            owner = experiment_owners.setdefault(experiment_name, campaign_id)
+            if owner != campaign_id:
+                raise ValueError(
+                    f"Compute campaigns '{owner}' and '{campaign_id}' both resolve to "
+                    f"experiment '{experiment_name}'."
+                )
+        campaigns.append(ComputeCampaign(campaign_id=campaign_id, overrides=dict(overrides)))
+    return tuple(campaigns)
+
+
+def _campaign_cli_scalar(value: Any, *, key: str, default: Any) -> str:
+    if default is None:
+        allowed: tuple[type, ...] = (str, int, float)
+    elif isinstance(default, float):
+        allowed = (int, float)
+    else:
+        allowed = (type(default),)
+    if isinstance(value, bool) or not isinstance(value, allowed):
+        expected = " or ".join(item.__name__ for item in allowed)
+        raise ValueError(
+            f"Campaign override '{key}' must be {expected}, got {type(value).__name__}."
+        )
+    return str(value)
+
+
+def compute_campaign_cli_tokens(
+    overrides: Mapping[str, Any],
+    *,
+    defaults: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Render campaign overrides as CLI tokens for ``config_loader.build_parser``.
+
+    Tokens follow the parser's typing. Booleans become ``--flag`` or
+    ``--no-flag``, lists become the flag followed by their items, and a key
+    with a ``null`` default takes one raw token. List options require at least
+    one item, so an empty list emits no token when the default is also empty.
+    A ``null`` override of a ``null`` default emits no token either. The parser
+    cannot express ``null`` for a typed key or an empty list over a non-empty
+    default, so those overrides raise.
+    """
+    tokens: list[str] = []
+    for key, value in overrides.items():
+        if key not in defaults:
+            raise ValueError(f"Campaign override '{key}' is not a defaults.yaml key.")
+        flag = f"--{str(key).lower().replace('_', '-')}"
+        default = defaults[key]
+        if value is None:
+            if default is not None:
+                raise ValueError(
+                    f"Campaign override '{key}' cannot be null because its default "
+                    f"is typed as {type(default).__name__}."
+                )
+            continue
+        if isinstance(default, bool):
+            if not isinstance(value, bool):
+                raise ValueError(f"Campaign override '{key}' must be a boolean.")
+            tokens.append(flag if value else f"--no-{flag[2:]}")
+        elif isinstance(default, list):
+            if not isinstance(value, list):
+                raise ValueError(f"Campaign override '{key}' must be a list.")
+            if not value:
+                if default:
+                    raise ValueError(
+                        f"Campaign override '{key}' cannot be an empty list because "
+                        "its default is not empty."
+                    )
+                continue
+            tokens.append(flag)
+            tokens.extend(
+                _campaign_cli_scalar(item, key=f"{key}[{idx}]", default=None)
+                for idx, item in enumerate(value)
+            )
+        else:
+            tokens.extend([flag, _campaign_cli_scalar(value, key=key, default=default)])
+    return tuple(tokens)
+
+
+def parse_duration_milliseconds(value: Any, *, key: str) -> int:
+    """Parse a recorded duration in seconds into whole milliseconds."""
+    if value is None or not str(value).strip():
+        raise ValueError(f"{key} is missing.")
+    try:
+        seconds = Decimal(str(value).strip())
+    except InvalidOperation as exc:
+        raise ValueError(f"{key}={value!r} is not a number.") from exc
+    if not seconds.is_finite():
+        raise ValueError(f"{key}={value!r} must be finite.")
+    if seconds < 0:
+        raise ValueError(f"{key}={value!r} must be non-negative.")
+    milliseconds = seconds * 1000
+    if milliseconds != milliseconds.to_integral_value():
+        raise ValueError(f"{key}={value!r} is not a whole number of milliseconds.")
+    return int(milliseconds)
+
+
+def parse_iso_timestamp_milliseconds(value: Any, *, key: str) -> int:
+    """Parse a recorded ISO timestamp with a timezone into epoch milliseconds."""
+    token = parse_required_nonempty_string(value, key=key)
+    try:
+        moment = datetime.fromisoformat(token)
+    except ValueError as exc:
+        raise ValueError(f"{key}={value!r} is not an ISO timestamp.") from exc
+    if moment.tzinfo is None:
+        raise ValueError(f"{key}={value!r} must include a timezone.")
+    if moment.microsecond % 1000:
+        raise ValueError(f"{key}={value!r} is not a whole number of milliseconds.")
+    return (moment - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(milliseconds=1)
+
+
+def parse_compute_paper_analyses(
+    raw: Any,
+    *,
+    campaign_ids: Sequence[str],
+) -> tuple[ComputePaperAnalysis, ...]:
+    """Parse the paper analyses that own non-official evaluation episodes.
+
+    Each analysis names a compute campaign and the UTC window, start inclusive
+    and end exclusive, in which its evaluations start. Windows of one campaign
+    must not overlap, so every episode belongs to at most one analysis.
+    """
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("Compute accounting 'analyses' must be a non-empty list.")
+    analyses: list[ComputePaperAnalysis] = []
+    for idx, entry in enumerate(raw):
+        context = f"Paper analysis at index {idx}"
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{context} must be a mapping.")
+        missing = [field for field in COMPUTE_PAPER_ANALYSIS_FIELDS if field not in entry]
+        unknown = sorted(
+            str(field) for field in entry if field not in COMPUTE_PAPER_ANALYSIS_FIELDS
+        )
+        if missing or unknown:
+            raise ValueError(
+                f"{context} must have exactly the fields "
+                f"{list(COMPUTE_PAPER_ANALYSIS_FIELDS)}: missing {missing}, unknown {unknown}."
+            )
+        analysis_id = parse_required_nonempty_string(entry["id"], key="id", context=context)
+        if any(analysis.analysis_id == analysis_id for analysis in analyses):
+            raise ValueError(f"Duplicate paper analysis id '{analysis_id}'.")
+        context = f"Paper analysis '{analysis_id}'"
+        campaign_id = parse_required_nonempty_string(
+            entry["campaign"],
+            key="campaign",
+            context=context,
+        )
+        if campaign_id not in campaign_ids:
+            raise ValueError(f"{context} names unknown compute campaign '{campaign_id}'.")
+        window = entry["anchor_window"]
+        if not isinstance(window, list) or len(window) != 2:
+            raise ValueError(f"{context} anchor_window must be a list of two ISO timestamps.")
+        start_ms = parse_iso_timestamp_milliseconds(
+            window[0],
+            key=f"{context} anchor_window start",
+        )
+        end_ms = parse_iso_timestamp_milliseconds(window[1], key=f"{context} anchor_window end")
+        if start_ms >= end_ms:
+            raise ValueError(f"{context} anchor_window must end after it starts.")
+        for other in analyses:
+            if (
+                other.campaign_id == campaign_id
+                and start_ms < other.window_end_ms
+                and other.window_start_ms < end_ms
+            ):
+                raise ValueError(
+                    f"{context} anchor_window overlaps the window of paper analysis "
+                    f"'{other.analysis_id}' in campaign '{campaign_id}'."
+                )
+        analyses.append(ComputePaperAnalysis(
+            analysis_id=analysis_id,
+            campaign_id=campaign_id,
+            window_start_ms=start_ms,
+            window_end_ms=end_ms,
+        ))
+    return tuple(analyses)
 
 
 # ---------------------------------------------------------------------------

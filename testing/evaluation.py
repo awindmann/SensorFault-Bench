@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 import mlflow
 import numpy as np
@@ -18,18 +18,20 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.loggers import MLFlowLogger
+from pytorch_lightning.utilities import rank_zero_only
 from torch.utils.data import DataLoader
 
 import models
 from config_loader import load_defaults, load_hparams
 from data.data_module import TSDataModule
 from data.dataset import PerturbedDataset
+from data.datasets import require_run_channel_order
 from data.perturbations import (
     build_perturbation_scenario_params_signature,
     fixed_channel_count_for_fraction,
     require_perturbation_channel_scope,
 )
-from data.samplers import uniform_severity
+from data.samplers import resolve_severity_distribution, sample_validated_severity
 from improvements import get_registration_by_loader_kind
 from models.pretrained_loader import PRETRAINED_MODEL_LOADERS
 from pipelines.ranking import (
@@ -64,7 +66,6 @@ from pipelines.training import search_runs_all
 from metrics.loss import resolve_stateless_loss
 from utils.env import current_git_commit
 from utils.parsing import (
-    DEGRADATION_SCORING_SEMANTICS,
     ROBUSTNESS_RESULTS_COMPLETE_TAG,
     SelectionPerturbationContextNotReadyError,
     build_shared_anchor_bootstrap_ci_tag_payload,
@@ -157,6 +158,7 @@ def _build_testing_datamodule(
         n_test_samples=args.n_test_samples,
         perturbation_channel_fraction_max=args.perturbation_channel_fraction_max,
         perturbation_scenarios=args.perturbation_scenarios,
+        perturbation_severity_distribution=args.perturbation_severity_distribution,
         train_split=args.train_split,
         val_split=args.val_split,
         purged_fraction=args.purged_fraction,
@@ -423,6 +425,12 @@ def load_model_with_loader(client, run, args, dm: TSDataModule | None = None):
             model, default_root_dir = _load_model_from_run(
                 scoped_client, run, model_arch
             )
+        if dm is not None:
+            require_run_channel_order(
+                run_tags,
+                dm.dataset_spec,
+                run_id=run.info.run_id,
+            )
     except Exception:
         artifact_tmpdir.cleanup()
         raise
@@ -466,8 +474,23 @@ def _prepare_model_for_evaluation(
         raise ValueError(
             f"Model expects {d_outputs} target features but datamodule has {dm.n_outputs}."
         )
-    if getattr(model, "target_indices", None) is None and dm.target_column_indices is not None:
-        model.target_indices = dm.target_column_indices
+    model_target_indices = getattr(model, "target_indices", None)
+    if model_target_indices is None:
+        if dm.target_column_indices is not None:
+            model.target_indices = dm.target_column_indices
+    else:
+        normalized_model_target_indices = tuple(int(idx) for idx in model_target_indices)
+        normalized_dm_target_indices = (
+            None
+            if dm.target_column_indices is None
+            else tuple(int(idx) for idx in dm.target_column_indices)
+        )
+        if normalized_model_target_indices != normalized_dm_target_indices:
+            raise ValueError(
+                f"Model target_indices {normalized_model_target_indices} do not match "
+                f"datamodule target_indices {normalized_dm_target_indices}. The channel "
+                "order of the data differs from the order the model was trained on."
+            )
     if hasattr(model, "bind_eval_context"):
         model.bind_eval_context(
             input_columns=dm.input_columns,
@@ -611,6 +634,22 @@ def _prepare_tensor_for_host_export(tensor: torch.Tensor) -> torch.Tensor:
     ):
         return host_tensor.to(dtype=torch.float32)
     return host_tensor
+
+
+# Randomized smoothing derives the noise of each window from its context key.
+# Degradation scoring and forecast replay share this context, so a replayed
+# forecast reproduces the scored one.
+_DEGRADATION_EVALUATION_CONTEXT = "degradation evaluation"
+
+
+def _degradation_noise_context_key(
+    context_name: str,
+    *,
+    scenario_idx: int | None,
+) -> str:
+    if scenario_idx is None:
+        return f"{context_name}:clean"
+    return f"{context_name}:scenario:{int(scenario_idx)}"
 
 
 def _bind_model_noise_sample_ids(
@@ -793,6 +832,10 @@ def _build_perturbed_split_error_frames(
         raise ValueError(
             f"Unsupported perturbed split '{split_name}' in {context_name}."
         )
+    severity_distribution = resolve_severity_distribution(
+        require_namespace_value(args, key="perturbation_severity_distribution"),
+        key="args.perturbation_severity_distribution",
+    )
 
     runtime_device = _resolve_requested_runtime_device(
         args,
@@ -851,7 +894,10 @@ def _build_perturbed_split_error_frames(
                         model,
                         x_device,
                         batch_sample_ids,
-                        context_key=f"{context_name}:clean",
+                        context_key=_degradation_noise_context_key(
+                            context_name,
+                            scenario_idx=None,
+                        ),
                     )
                     err_clean = _score_degradation_predictions(
                         metric_fn,
@@ -883,6 +929,7 @@ def _build_perturbed_split_error_frames(
                             scenario_idx=scenario_idx,
                             cont_idx=perturbed_dataset.cont_idx,
                             disc_idx=perturbed_dataset.disc_idx,
+                            severity_distribution=severity_distribution,
                             context_name=context_name,
                         )
                         pred_pert = _predict_with_bound_noise_sample_ids(
@@ -893,7 +940,10 @@ def _build_perturbed_split_error_frames(
                                 runtime_precision=runtime_precision,
                             ),
                             batch_sample_ids,
-                            context_key=f"{context_name}:scenario:{scenario_idx}",
+                            context_key=_degradation_noise_context_key(
+                                context_name,
+                                scenario_idx=scenario_idx,
+                            ),
                         )
                         err_pert = _score_degradation_predictions(
                             metric_fn,
@@ -955,6 +1005,7 @@ def _build_degradation_scenario_batch(
     scenario_idx: int,
     cont_idx,
     disc_idx,
+    severity_distribution: Callable[[torch.Generator], float],
     context_name: str,
     capture_affected_channels: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, list[float], list[Sequence[int] | None] | None]:
@@ -972,7 +1023,11 @@ def _build_degradation_scenario_batch(
                 sample_id=int(sample_id),
             )
         )
-        severity = float(uniform_severity(rng))
+        severity = sample_validated_severity(
+            severity_distribution,
+            rng,
+            context=f"{context_name} scenario/{int(scenario_idx)}",
+        )
         x_pert, y_pert, affected_channels = perturbation(
             x_cpu[row_idx].clone(),
             y_cpu[row_idx].clone(),
@@ -1037,6 +1092,7 @@ def _build_fixed_channel_fraction_scenario_batch(
     disc_idx,
     fixed_channel_fraction: float,
     perturbation_channel_fraction_max: float,
+    severity_distribution: Callable[[torch.Generator], float],
     context_name: str,
 ) -> tuple[torch.Tensor, torch.Tensor, list[float], list[dict[str, Any]]]:
     scope, eligible_channels = _eligible_channels_for_perturbation_scope(
@@ -1067,7 +1123,11 @@ def _build_fixed_channel_fraction_scenario_batch(
                 sample_id=int(sample_id),
             )
         )
-        intensity_severity = float(uniform_severity(rng))
+        intensity_severity = sample_validated_severity(
+            severity_distribution,
+            rng,
+            context=f"{context_name} scenario/{int(scenario_idx)}",
+        )
         x_pert, y_pert, affected_channels = perturbation(
             x_cpu[row_idx].clone(),
             y_cpu[row_idx].clone(),
@@ -1164,6 +1224,34 @@ def _prime_model_for_degradation_evaluation(
     )
 
 
+class _EvalMLFlowLogger(MLFlowLogger):
+    """MLflow logger that attaches evaluation results to a finished run.
+
+    Lightning terminates the run on finalize, which stamps a new end time. The
+    end time of a run breaks selection ties, so evaluation restores it.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        end_time = self.experiment.get_run(self.run_id).info.end_time
+        if end_time is None:
+            raise ValueError(
+                f"Run {self.run_id} has no end time. Evaluation requires a "
+                "finished run because its end time breaks selection ties."
+            )
+        self._run_end_time = int(end_time)
+
+    @rank_zero_only
+    def finalize(self, status: str = "success") -> None:
+        super().finalize(status)
+        terminated_status = self.experiment.get_run(self.run_id).info.status
+        self.experiment.set_terminated(
+            self.run_id,
+            status=terminated_status,
+            end_time=self._run_end_time,
+        )
+
+
 def _make_eval_logger(
     run_id: str,
     dataset_name: str,
@@ -1172,7 +1260,7 @@ def _make_eval_logger(
     log_test_commit: bool = True,
 ) -> MLFlowLogger:
     tracking_uri = build_mlflow_tracking_uri(args.logdir)
-    logger = MLFlowLogger(
+    logger = _EvalMLFlowLogger(
         tracking_uri=tracking_uri,
         save_dir=resolve_mlflow_local_save_dir(args.logdir),
         experiment_name=f"{dataset_name}",
@@ -1242,7 +1330,7 @@ def _log_common_eval_params(
         logger.experiment.set_tag(
             logger.run_id,
             "robustness_scoring_semantics",
-            DEGRADATION_SCORING_SEMANTICS,
+            eval_context["robustness_scoring_semantics"],
         )
         logger.experiment.set_tag(
             logger.run_id,
@@ -1406,7 +1494,7 @@ def _run_degradation_evaluation(
         args=args,
         split_name="test",
         perturbation_seed=eval_data_seed,
-        context_name="degradation evaluation",
+        context_name=_DEGRADATION_EVALUATION_CONTEXT,
     )
     idx_to_name = {
         idx: str(name) for idx, name in enumerate(scenario_names)
@@ -1601,6 +1689,10 @@ def _build_fixed_channel_fraction_error_frames(
         context=context_name,
     )
     metric_fn = resolve_stateless_loss(args.test_metric)
+    severity_distribution = resolve_severity_distribution(
+        require_namespace_value(args, key="perturbation_severity_distribution"),
+        key="args.perturbation_severity_distribution",
+    )
     target_n_samples = int(len(clean_df))
     scenario_rows: list[dict[str, Any]] = []
     clean_loader = DataLoader(
@@ -1655,6 +1747,7 @@ def _build_fixed_channel_fraction_error_frames(
                                 perturbation_channel_fraction_max=(
                                     perturbation_channel_fraction_max
                                 ),
+                                severity_distribution=severity_distribution,
                                 context_name=context_name,
                             )
                         )
@@ -1666,7 +1759,10 @@ def _build_fixed_channel_fraction_error_frames(
                                 runtime_precision=runtime_precision,
                             ),
                             batch_sample_ids,
-                            context_key=f"degradation evaluation:scenario:{scenario_idx}",
+                            context_key=_degradation_noise_context_key(
+                                _DEGRADATION_EVALUATION_CONTEXT,
+                                scenario_idx=scenario_idx,
+                            ),
                         )
                         err_pert = _score_degradation_predictions(
                             metric_fn,
@@ -1853,6 +1949,11 @@ def _run_fixed_channel_fraction_evaluation(
         fixed_channel_fraction,
         max_value=perturbation_channel_fraction_max,
     )
+    degradation_eval_context = require_degradation_eval_context_from_args(
+        args,
+        eval_data_seed=eval_data_seed,
+        context="args",
+    )
     context_payload = {
         "evaluation_family": "fixed_channel_fraction",
         "fixed_channel_fraction": float(fixed_channel_fraction),
@@ -1861,11 +1962,9 @@ def _run_fixed_channel_fraction_evaluation(
         "eval_data_seed": int(eval_data_seed),
         "n_test_samples": int(len(clean_df)),
         "perturbation_channel_fraction_max": perturbation_channel_fraction_max,
-        "perturbation_scenarios_signature": require_degradation_eval_context_from_args(
-            args,
-            eval_data_seed=eval_data_seed,
-            context="args",
-        )["perturbation_scenarios_signature"],
+        "perturbation_scenarios_signature": degradation_eval_context[
+            "perturbation_scenarios_signature"
+        ],
         "perturbation_scenarios_count": int(len(idx_to_name)),
         "perturbation_idx_name_map": {
             str(idx): str(name) for idx, name in idx_to_name.items()
@@ -2322,6 +2421,7 @@ def _collect_degradation_forecast_samples(
     sample_rows: pd.DataFrame,
     test_metric: str,
     eval_data_seed: int,
+    severity_distribution: Callable[[torch.Generator], float],
     runtime_device: torch.device,
     runtime_precision,
 ) -> list[dict[str, Any]]:
@@ -2470,7 +2570,10 @@ def _collect_degradation_forecast_samples(
                             runtime_precision=resolved_runtime_precision,
                         ),
                         batch_sample_ids,
-                        context_key="degradation:clean",
+                        context_key=_degradation_noise_context_key(
+                            _DEGRADATION_EVALUATION_CONTEXT,
+                            scenario_idx=None,
+                        ),
                     )
                     err_clean_batch = _score_degradation_predictions(
                         metric_fn,
@@ -2525,6 +2628,7 @@ def _collect_degradation_forecast_samples(
                                 scenario_idx=scenario_idx,
                                 cont_idx=perturbed_dataset.cont_idx,
                                 disc_idx=perturbed_dataset.disc_idx,
+                                severity_distribution=severity_distribution,
                                 context_name="Canonical forecast-sample rendering",
                                 capture_affected_channels=True,
                             )
@@ -2537,7 +2641,10 @@ def _collect_degradation_forecast_samples(
                                 runtime_precision=resolved_runtime_precision,
                             ),
                             batch_sample_ids,
-                            context_key=f"degradation:scenario:{scenario_idx}",
+                            context_key=_degradation_noise_context_key(
+                                _DEGRADATION_EVALUATION_CONTEXT,
+                                scenario_idx=scenario_idx,
+                            ),
                         )
                         err_pert_batch = _score_degradation_predictions(
                             metric_fn,

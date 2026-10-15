@@ -72,7 +72,7 @@ def _make_datamodule(
     tmp_path,
     *,
     p_perturbations="uniform",
-    severity_laws=None,
+    perturbation_severity_distribution="uniform",
     dataset_spec: ResolvedDatasetSpec | None = None,
     perturbation_scenarios=DEFAULT_TEST_SCENARIOS,
     seed: int = 42,
@@ -89,6 +89,7 @@ def _make_datamodule(
         n_test_samples=n_test_samples,
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=perturbation_scenarios,
+        perturbation_severity_distribution=perturbation_severity_distribution,
         train_split=0.7,
         val_split=0.2,
         purged_fraction=0.0,
@@ -99,7 +100,6 @@ def _make_datamodule(
         val_seed=val_seed,
         strict_iid=False,
         p_perturbations=p_perturbations,
-        severity_laws=severity_laws,
     )
 
 
@@ -250,12 +250,12 @@ def test_datamodule_rejects_probability_vector_mismatched_to_selected_scenarios(
         )
 
 
-def test_datamodule_rejects_unknown_severity_law_name_for_selected_scenarios(tmp_path):
-    with pytest.raises(ValueError, match="unknown perturbation names"):
+def test_datamodule_rejects_unknown_evaluation_severity_distribution(tmp_path):
+    with pytest.raises(ValueError, match="Unsupported perturbation_severity_distribution"):
         _make_datamodule(
             tmp_path,
             perturbation_scenarios=("drift", "missing_data"),
-            severity_laws={"noise": lambda rng: 0.5},
+            perturbation_severity_distribution="unknown",
         )
 
 

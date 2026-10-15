@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from data.data_module import _instantiate_perturbations
+from data.data_module import instantiate_perturbations
 from data.dataset import TrainPerturbedDataset
 from data.perturbations import PERTURBATION_REGISTRY
 from pipelines.specs import PipelineSpec
@@ -190,7 +190,7 @@ def test_train_perturbed_dataset_uses_fresh_randomness_for_repeated_access():
 
 def test_instantiate_perturbations_rejects_unregistered_all_scope_class():
     with pytest.raises(ValueError, match="is not registered"):
-        _instantiate_perturbations(
+        instantiate_perturbations(
             [_UnregisteredAllScopePerturbation],
             registry=PERTURBATION_REGISTRY,
             channel_fraction_max=0.1,

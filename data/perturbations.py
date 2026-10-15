@@ -35,6 +35,26 @@ def _parse_severity(value: float) -> float:
     return parse_required_unit_interval_float(value, key="severity")
 
 
+def _negate_realized_input_delta(
+    x_clean: torch.Tensor,
+    x_positive: torch.Tensor,
+) -> torch.Tensor:
+    """Mirror a realized positive input fault around the clean input."""
+    return x_clean - (x_positive - x_clean)
+
+
+def _require_input_only_target_unchanged(
+    y_clean: torch.Tensor,
+    y_positive: torch.Tensor,
+    *,
+    perturbation_name: str,
+) -> None:
+    if y_positive.shape != y_clean.shape or not torch.equal(y_positive, y_clean):
+        raise ValueError(
+            f"{perturbation_name} requires the positive perturbation to leave targets unchanged."
+        )
+
+
 VALID_PERTURBATION_CHANNEL_SCOPES = frozenset({"continuous", "discrete", "all"})
 
 
@@ -276,6 +296,80 @@ def lin_interp(severity: float, low: float, high: float) -> float:
     """Linear interpolation."""
     parsed_severity = _parse_severity(severity)
     return low + parsed_severity * (high - low)
+
+
+def boundary_preserving_local_timing_warp_coordinates(
+    window_start: int,
+    window_length: int,
+    severity: float,
+    *,
+    max_rate_deviation: float,
+) -> np.ndarray:
+    """Return validated in-window source coordinates for a local timing warp."""
+    if isinstance(window_start, bool) or not isinstance(window_start, int):
+        raise ValueError(
+            f"window_start must be a non-negative integer; got {window_start!r}."
+        )
+    if window_start < 0:
+        raise ValueError(
+            f"window_start must be a non-negative integer; got {window_start}."
+        )
+    if isinstance(window_length, bool) or not isinstance(window_length, int):
+        raise ValueError(
+            f"window_length must be an integer with at least two endpoints; "
+            f"got {window_length!r}."
+        )
+    if window_length < 2:
+        raise ValueError(
+            "Boundary-preserving local timing warp requires a window with at "
+            f"least two endpoints; got window_length={window_length}."
+        )
+    parsed_severity = _parse_severity(severity)
+    parsed_rate_deviation = parse_required_unit_interval_float(
+        max_rate_deviation,
+        key="max_rate_deviation",
+    )
+    if parsed_rate_deviation >= 1.0:
+        raise ValueError(
+            "max_rate_deviation must be less than 1 so source coordinates stay "
+            f"strictly increasing; got {parsed_rate_deviation}."
+        )
+
+    normalized = np.linspace(0.0, 1.0, window_length, dtype=np.float64)
+    warped = normalized + (
+        parsed_rate_deviation
+        * parsed_severity
+        / np.pi
+        * np.sin(np.pi * normalized)
+    )
+    coordinates = window_start + (window_length - 1) * warped
+
+    tolerance = 1e-12
+    window_end = float(window_start + window_length - 1)
+    if not np.isfinite(coordinates).all():
+        raise ValueError("Local timing-warp coordinates must be finite.")
+    if not np.all(np.diff(coordinates) > 0.0):
+        raise ValueError("Local timing-warp coordinates must be strictly increasing.")
+    if not np.isclose(
+        coordinates[0],
+        float(window_start),
+        rtol=0.0,
+        atol=tolerance,
+    ) or not np.isclose(
+        coordinates[-1],
+        window_end,
+        rtol=0.0,
+        atol=tolerance,
+    ):
+        raise ValueError("Local timing-warp coordinates must preserve both endpoints.")
+    if (
+        float(coordinates.min()) < float(window_start) - tolerance
+        or float(coordinates.max()) > window_end + tolerance
+    ):
+        raise ValueError(
+            "Local timing-warp coordinates must remain inside the selected window."
+        )
+    return coordinates
 
 
 def _constructor_default_payload(perturbation_cls: type) -> dict[str, Any]:
@@ -640,6 +734,72 @@ class Spike:
         return x, y, channels
 
 
+class NegativeDrift(Drift):
+    """Apply the negative direction of a realized Drift fault."""
+
+    name = "negative_drift"
+
+    def __call__(
+        self, x, y, severity, rng, cont_channels, disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        x_clean = x.clone()
+        y_clean = y.clone()
+        x_positive, y_positive, channels = super().__call__(
+            x,
+            y,
+            severity,
+            rng,
+            cont_channels,
+            disc_channels,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
+        )
+        _require_input_only_target_unchanged(
+            y_clean,
+            y_positive,
+            perturbation_name=self.name,
+        )
+        return (
+            _negate_realized_input_delta(x_clean, x_positive),
+            y_positive,
+            channels,
+        )
+
+
+class NegativeSpike(Spike):
+    """Apply the negative direction of a realized Spike fault."""
+
+    name = "negative_spike"
+
+    def __call__(
+        self, x, y, severity, rng, cont_channels, disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        x_clean = x.clone()
+        y_clean = y.clone()
+        x_positive, y_positive, channels = super().__call__(
+            x,
+            y,
+            severity,
+            rng,
+            cont_channels,
+            disc_channels,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
+        )
+        _require_input_only_target_unchanged(
+            y_clean,
+            y_positive,
+            perturbation_name=self.name,
+        )
+        return (
+            _negate_realized_input_delta(x_clean, x_positive),
+            y_positive,
+            channels,
+        )
+
+
 class StuckSensor:
     """Hold continuous channels flat for a contiguous window."""
     name = "stuck_sensor"
@@ -823,6 +983,79 @@ class TimeCompress:
             interp_values = torch.from_numpy(interp_values_np).to(device=x.device, dtype=x.dtype)
             x_pert[warp_start_pos:window_end, ch] = interp_values
 
+        return x_pert, y, channels
+
+
+class LocalTimingWarp:
+    """Apply a boundary-preserving local clock-rate distortion."""
+
+    name = "local_timing_warp"
+    channel_scope = "continuous"
+
+    def __init__(
+        self,
+        channel_frac: float = 0.1,
+        *,
+        max_rate_deviation: float = 0.9,
+    ):
+        self.ch_frac = _parse_channel_fraction_max(channel_frac)
+        parsed_rate_deviation = parse_required_unit_interval_float(
+            max_rate_deviation,
+            key="max_rate_deviation",
+        )
+        if parsed_rate_deviation >= 1.0:
+            raise ValueError(
+                "max_rate_deviation must be less than 1 so source coordinates "
+                f"stay strictly increasing; got {parsed_rate_deviation}."
+            )
+        self.max_rate_deviation = parsed_rate_deviation
+
+    def __call__(
+        self, x, y, severity, rng, cont_channels, _disc_channels, *,
+        channel_count_mode="severity", channel_count_value=None,
+    ):
+        input_length = int(x.size(0))
+        window_length = int(np.ceil(input_length / 2))
+        if window_length < 2:
+            raise ValueError(
+                "Boundary-preserving local timing warp requires a window with at "
+                f"least two endpoints; got input_length={input_length}."
+            )
+        parsed_severity, channels = _select_channels_for_call(
+            cont_channels,
+            self.ch_frac,
+            severity,
+            rng,
+            channel_count_mode=channel_count_mode,
+            channel_count_value=channel_count_value,
+        )
+        if not channels:
+            return x, y, []
+
+        window_start = randint_py(
+            1,
+            input_length - window_length + 1,
+            rng,
+        )
+        source_coordinates = boundary_preserving_local_timing_warp_coordinates(
+            window_start,
+            window_length,
+            parsed_severity,
+            max_rate_deviation=self.max_rate_deviation,
+        )
+        original_time_index = np.arange(input_length, dtype=np.float64)
+        window_end = window_start + window_length
+        x_pert = x.clone()
+        for channel in channels:
+            channel_values = x[:, channel].detach().cpu().numpy()
+            interpolated = np.interp(
+                source_coordinates,
+                original_time_index,
+                channel_values,
+            )
+            x_pert[window_start:window_end, channel] = torch.from_numpy(
+                interpolated
+            ).to(device=x.device, dtype=x.dtype)
         return x_pert, y, channels
 
 
@@ -1055,6 +1288,9 @@ EXTENDED_PERTURBATIONS = (
     TrimmingVarying,
     TimeVaryingScaling,
     PacketLoss,
+    NegativeDrift,
+    NegativeSpike,
+    LocalTimingWarp,
 )
 
 ALL_PERTURBATIONS = DEFAULT_PERTURBATIONS + EXTENDED_PERTURBATIONS

@@ -375,10 +375,7 @@ arrow_df <- trajectory_df %>%
     gap_norm = pmin(ring_gap_norm, pmax(segment_norm - 1e-6, 0)),
     arrow_xend = improved_MSE_test - gap_norm * (dx_norm / safe_segment_norm) * x_span,
     arrow_yend = improved_D_w - gap_norm * (dy_norm / safe_segment_norm) * y_span,
-    line_only = (
-      (panel_title == "Traffic" & architecture == "GRU") |
-      (panel_title == "Penmanshiel WT08" & architecture == "DLinear")
-    )
+    line_only = (panel_title == "Traffic" & architecture == "GRU")
   ) %>%
   filter(segment_norm > min_arrow_segment_norm)
 

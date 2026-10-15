@@ -85,22 +85,53 @@ def load_dataset_windows(
     )
 
 
+def load_cli_help(path: Path = Path("configs/cli_help.yaml")):
+    """Load the grouped help text of the command-line options."""
+    from utils.parsing import parse_cli_help_config
+
+    with open(path) as f:
+        return parse_cli_help_config(yaml.safe_load(f), key=str(path))
+
+
 def build_parser(defaults: dict) -> argparse.ArgumentParser:
-    """Build argparse with defaults from YAML."""
-    parser = argparse.ArgumentParser()
-    for key, value in defaults.items():
-        arg_name = f"--{key.lower().replace('_', '-')}"
-        if _is_scope_list_key(key):
-            parser.add_argument(arg_name, nargs="+", default=value)
-        elif isinstance(value, bool):
-            parser.add_argument(arg_name, action=argparse.BooleanOptionalAction, default=value)
-        elif isinstance(value, list):
-            parser.add_argument(arg_name, nargs="+", default=value)
-        elif value is None:
-            parser.add_argument(arg_name, default=None)
-        else:
-            parser.add_argument(arg_name, type=type(value), default=value)
+    """Build argparse with defaults from YAML and help text from configs/cli_help.yaml.
+
+    Options appear in the groups of configs/cli_help.yaml. An option without a
+    help entry raises, so every option documents itself in ``--help``.
+    """
+    help_groups = load_cli_help()
+    documented = {key for group in help_groups for key in group.options}
+    undocumented = [key for key in defaults if key not in documented]
+    if undocumented:
+        raise ValueError(
+            "configs/cli_help.yaml has no help entry for option(s): "
+            f"{', '.join(undocumented)}. Add one entry per option."
+        )
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    for group in help_groups:
+        keys = [key for key in group.options if key in defaults]
+        if not keys:
+            continue
+        argument_group = parser.add_argument_group(group.title, group.description)
+        for key in keys:
+            _add_default_argument(argument_group, key, defaults[key], help_text=group.options[key])
     return parser
+
+
+def _add_default_argument(parser, key: str, value, *, help_text: str) -> None:
+    arg_name = f"--{key.lower().replace('_', '-')}"
+    if _is_scope_list_key(key):
+        parser.add_argument(arg_name, nargs="+", default=value, help=help_text)
+    elif isinstance(value, bool):
+        parser.add_argument(
+            arg_name, action=argparse.BooleanOptionalAction, default=value, help=help_text,
+        )
+    elif isinstance(value, list):
+        parser.add_argument(arg_name, nargs="+", default=value, help=help_text)
+    elif value is None:
+        parser.add_argument(arg_name, default=None, help=help_text)
+    else:
+        parser.add_argument(arg_name, type=type(value), default=value, help=help_text)
 
 
 def parse_explicit_cli_overrides(param_defaults: dict, extra_args=None) -> dict:

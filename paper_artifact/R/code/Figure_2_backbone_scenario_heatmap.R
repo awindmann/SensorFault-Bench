@@ -359,7 +359,7 @@ main_plot <- ggplot(
   geom_text(
     aes(label = D_label, color = D_label_color),
     family = "serif",
-    size = 1.7
+    size = 2.4
   ) +
   facet_grid(. ~ dataset_display) +
   scale_x_continuous(

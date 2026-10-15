@@ -5,7 +5,13 @@ import pytest
 import models
 import run_testing
 import run_training
-from config_loader import build_parser, load_benchmark_scope, load_defaults, load_hparams
+from config_loader import (
+    build_parser,
+    load_benchmark_scope,
+    load_defaults,
+    load_hparams,
+    load_parsed_core_figure_registry,
+)
 from improvements import (
     get_improvement_registration,
     get_registration_by_loader_kind,
@@ -14,6 +20,7 @@ from improvements import (
 from improvements.base import BackboneReference, ImprovementSpec as ImprovementMetadataSpec
 from pipelines.recipes import PIPELINE_RECIPE_PATHS_BY_METHOD, load_pipeline_spec_for_method
 from pipelines.runner import PipelineRunner
+from pipelines.scope import load_benchmark_architecture_families
 from pipelines.selection import resolve_requested_architectures, resolve_requested_methods
 from pipelines.specs import PipelineSpec
 from testing.evaluation import (
@@ -46,7 +53,12 @@ def test_unknown_architecture_raises_through_normal_scope_parser():
 
 def test_benchmark_method_discovery_matches_configured_scope():
     assert set(PIPELINE_RECIPE_PATHS_BY_METHOD) == BENCHMARK_METHODS
-    assert set(list_available_improvements()) == {"ensemble", "randomized_smoothing"}
+    wrapping_methods = {
+        method
+        for method in PIPELINE_RECIPE_PATHS_BY_METHOD
+        if load_pipeline_spec_for_method(method).pipeline_kind == "wrap"
+    }
+    assert set(list_available_improvements()) == wrapping_methods
 
     with pytest.raises(ValueError, match="Unknown pipeline_method 'not_a_method'"):
         load_pipeline_spec_for_method("not_a_method")
@@ -278,4 +290,49 @@ def test_baseline_hparams_json_reads_valid_mapping(tmp_path):
         "autoregressive": False,
         "dropout": 0.0,
         "lr": 0.001,
+    }
+
+
+def test_architecture_families_cover_every_benchmark_architecture():
+    families = load_benchmark_architecture_families()
+
+    assert list(families) == _BENCHMARK_SCOPE["architectures"]["display_order"]
+    assert all(families.values())
+
+
+@pytest.mark.parametrize(
+    ("families", "message"),
+    (
+        ({"DLinear": "Fully Connected"}, "missing architecture"),
+        ({**_BENCHMARK_SCOPE["architectures"]["families"], "MyModel": "Linear"}, "unknown architecture"),
+        ({**_BENCHMARK_SCOPE["architectures"]["families"], "GRU": " "}, "GRU"),
+    ),
+)
+def test_architecture_families_raise_on_incomplete_or_unknown_entries(families, message):
+    scope = {
+        **_BENCHMARK_SCOPE,
+        "architectures": {**_BENCHMARK_SCOPE["architectures"], "families": families},
+    }
+
+    with pytest.raises(ValueError, match=message):
+        load_benchmark_architecture_families(scope)
+
+
+def test_reporting_core_figure_labels_match_benchmark_scope():
+    registry = load_parsed_core_figure_registry()
+    datasets = _BENCHMARK_SCOPE["datasets"]
+    methods = _BENCHMARK_SCOPE["methods"]
+
+    assert dict(registry.dataset_spec) == {
+        key: datasets["display_labels"][key]
+        for key in datasets["display_order"]
+    }
+    assert registry.method_order == tuple(
+        method
+        for method in methods["display_order"]
+        if method != "baseline"
+    )
+    assert registry.method_display == {
+        method: methods["display_labels"][method]
+        for method in registry.method_order
     }

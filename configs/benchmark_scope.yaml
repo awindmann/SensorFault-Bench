@@ -2,8 +2,8 @@
 # Benchmark display and applicability contract.
 #
 # Runtime membership still belongs to configs/defaults.yaml and recipe/model
-# registries. This manifest records reporting labels, display order, and
-# method/architecture applicability.
+# registries. This manifest records reporting labels, display order,
+# architecture families, and method/architecture applicability.
 
 schema_version: 1
 
@@ -46,6 +46,14 @@ architectures:
     baseline_only_reference:
       - SeasonalNaive
       - Chronos2
+  families:
+    DLinear: "Fully Connected"
+    GRU: "Recurrent"
+    ModernTCN: "Convolution"
+    PatchTST: "Attention"
+    TSMixer: "Fully Connected"
+    SeasonalNaive: "Statistical"
+    Chronos2: "Foundation"
 
 methods:
   display_order:

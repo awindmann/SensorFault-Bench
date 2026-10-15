@@ -24,6 +24,7 @@ from utils.env import set_mlflow_storage_env
 from utils.parsing import (
     parse_optional_unit_float,
     parse_perturbation_channel_fraction_max,
+    parse_perturbation_severity_distribution,
     require_namespace_value,
 )
 
@@ -47,6 +48,10 @@ def prepare_analysis_entrypoint_args(
     recipe_param_defaults = _recipe_param_defaults(extracted_defaults)
     defaults = merge_recipe_defaults_for_scope(defaults, extracted_defaults)
     parser = build_parser(defaults)
+    parser.description = (
+        "Build the result tables, paired method deltas, and figures from the "
+        "tested models."
+    )
     args = parser.parse_args(list(explicit_cli_args))
     fixed_fraction = parse_optional_unit_float(
         getattr(args, "fixed_channel_fraction", None),
@@ -64,6 +69,10 @@ def prepare_analysis_entrypoint_args(
             key="fixed_channel_fraction",
             max_value=max_fraction,
         )
+    args.perturbation_severity_distribution = parse_perturbation_severity_distribution(
+        require_namespace_value(args, key="perturbation_severity_distribution"),
+        key="perturbation_severity_distribution",
+    )
     args._explicit_cli_args = explicit_cli_args
 
     args._recipe_param_overrides = parse_explicit_cli_overrides(
@@ -85,6 +94,12 @@ def prepare_analysis_entrypoint_args(
         args,
         configured_methods=configured_methods,
     )
+    if "baseline" not in requested_methods:
+        raise ValueError(
+            "Analysis compares each robustness-improvement method with the "
+            "baseline forecasting model of the same architecture, so --method "
+            "must include baseline."
+        )
     requested_architectures = resolve_requested_architectures(args)
     args._method_architecture_scope = resolve_benchmark_method_architecture_scope(
         methods=requested_methods,

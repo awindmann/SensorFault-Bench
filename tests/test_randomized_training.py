@@ -1,9 +1,13 @@
 import numpy as np
+import pandas as pd
+import pytest
 import torch
 
 from pathlib import Path
 
-from data.dataset import NoisyDataset
+from data.data_module import TSDataModule, validate_train_noise_config
+from data.dataset import NoisyDataset, TSDataset
+from data.datasets.base import ResolvedDatasetSpec
 from pipelines.specs import PipelineSpec
 
 
@@ -217,3 +221,73 @@ def test_render_kwargs_preserves_float_for_train_noise_std():
     assert isinstance(rendered["train_noise_std"], float)
     assert rendered["train_noise_std"] == 0.1
     assert rendered["train_noise_channels"] == "continuous"
+
+
+def _noise_datamodule(tmp_path, train_noise_std) -> TSDataModule:
+    path = tmp_path / "toy.csv"
+    pd.DataFrame(
+        {"a": np.arange(160, dtype=float), "b": np.arange(160, dtype=float) + 1.0}
+    ).to_csv(path, index=False)
+    spec = ResolvedDatasetSpec(
+        key="toy",
+        path=str(path),
+        input_channels=("a", "b"),
+        target_channels=("a",),
+        target_alias=None,
+        split_mode="temporal",
+        description=None,
+        batch_column=None,
+        continuous_channels=("a", "b"),
+        discrete_channels=(),
+    )
+    return TSDataModule(
+        dataset_spec=spec,
+        input_len=8,
+        target_len=2,
+        n_train_samples=16,
+        n_val_samples=8,
+        n_test_samples=4,
+        perturbation_channel_fraction_max=0.5,
+        perturbation_scenarios=("drift",),
+        perturbation_severity_distribution="uniform",
+        train_split=0.6,
+        val_split=0.2,
+        purged_fraction=0.0,
+        shuffle_batches_before_split=False,
+        batch_size=4,
+        num_workers=0,
+        seed=42,
+        strict_iid=False,
+        train_noise_std=train_noise_std,
+        train_noise_channels="continuous",
+        train_noise_generator=torch.Generator().manual_seed(1),
+    )
+
+
+@pytest.mark.parametrize("noise_std", [float("nan"), float("inf"), "nan"])
+def test_train_noise_std_rejects_non_finite_values(tmp_path, noise_std):
+    base = DummyDataset(
+        np.zeros((2, 1), dtype=np.float32),
+        np.zeros((1, 1), dtype=np.float32),
+        input_columns=["x"],
+        continuous_channels=["x"],
+    )
+
+    with pytest.raises(ValueError, match="train_noise_std must be finite"):
+        validate_train_noise_config(noise_std, "continuous")
+    with pytest.raises(ValueError, match="train_noise_std must be finite"):
+        _noise_datamodule(tmp_path, noise_std)
+    with pytest.raises(ValueError, match="noise_std must be finite"):
+        NoisyDataset(base, noise_std=noise_std, noise_channels="all")
+
+
+def test_datamodule_wraps_train_split_only_for_positive_noise(tmp_path):
+    noisy = _noise_datamodule(tmp_path, 0.2)
+    noisy.setup()
+    clean = _noise_datamodule(tmp_path, 0.0)
+    clean.setup()
+
+    assert isinstance(noisy.ds_train, NoisyDataset)
+    assert noisy.ds_train.noise_std == 0.2
+    assert isinstance(noisy.ds_val, TSDataset)
+    assert isinstance(clean.ds_train, TSDataset)

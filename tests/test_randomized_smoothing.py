@@ -1,11 +1,20 @@
 import math
 import warnings
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
+from data.samplers import resolve_severity_distribution
 from models.base_module import BaseLitModule
 from models.randomized_smoothing import RandomizedSmoothing
+from testing.evaluation import (
+    _DEGRADATION_EVALUATION_CONTEXT,
+    _build_perturbed_split_error_frames,
+    _collect_degradation_forecast_samples,
+    _degradation_noise_context_key,
+)
 
 
 class _DummyBackbone(BaseLitModule):
@@ -421,3 +430,102 @@ def test_randomized_smoothing_bind_eval_context_is_a_no_op():
     )
 
     assert outputs["pred"].shape == (1, 1, 2)
+
+
+class _WindowDataset(torch.utils.data.Dataset):
+    def __init__(self, x: torch.Tensor, y: torch.Tensor):
+        self.x = x
+        self.y = y
+        self.sample_idxs = np.arange(len(x), dtype=np.int64) * 7
+
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, index):
+        return self.x[index], self.y[index]
+
+
+def _shift_inputs(x, y, severity, rng, cont_idx, disc_idx, **_channel_count):
+    return x + severity, y, tuple(cont_idx)
+
+
+def _scale_inputs(x, y, severity, rng, cont_idx, disc_idx, **_channel_count):
+    return x * (1.0 + severity), y, tuple(cont_idx)
+
+
+def _degradation_datamodule(*, batch_size: int) -> SimpleNamespace:
+    generator = torch.Generator().manual_seed(3)
+    base_dataset = _WindowDataset(
+        torch.randn((5, 2, 2), generator=generator),
+        torch.randn((5, 1, 2), generator=generator),
+    )
+    return SimpleNamespace(
+        ds_test=SimpleNamespace(base_ds=base_dataset, cont_idx=[0, 1], disc_idx=[]),
+        perturbation_names=["shift", "scale"],
+        pert_sampler=SimpleNamespace(perturbations=[_shift_inputs, _scale_inputs]),
+        input_feature_names=("a", "b"),
+        target_feature_names=("a", "b"),
+        batch_size=batch_size,
+        destandardize_inputs=lambda tensor: tensor,
+        destandardize_targets=lambda tensor: tensor,
+    )
+
+
+def test_degradation_noise_context_keeps_the_scored_noise_stream():
+    assert (
+        _degradation_noise_context_key(_DEGRADATION_EVALUATION_CONTEXT, scenario_idx=None)
+        == "degradation evaluation:clean"
+    )
+    assert (
+        _degradation_noise_context_key(_DEGRADATION_EVALUATION_CONTEXT, scenario_idx=3)
+        == "degradation evaluation:scenario:3"
+    )
+
+
+def test_forecast_replay_reproduces_scored_randomized_smoothing_forecasts():
+    wrapper = _make_wrapper(noise_std=0.2, sample_count=4, seed=5, trim_alpha=0.25)
+    args = SimpleNamespace(
+        perturbation_severity_distribution="uniform",
+        accelerator="cpu",
+        devices=1,
+        precision=32,
+        test_metric="MSE",
+        batch_size=3,
+    )
+    eval_data_seed = 11
+
+    clean_df, scenario_df, _ = _build_perturbed_split_error_frames(
+        model=wrapper,
+        dm=_degradation_datamodule(batch_size=3),
+        args=args,
+        split_name="test",
+        perturbation_seed=eval_data_seed,
+        context_name=_DEGRADATION_EVALUATION_CONTEXT,
+    )
+    # Replay a different batch layout to show that the per-window noise binding,
+    # not the batch composition, fixes each forecast.
+    replay_rows = scenario_df.assign(sample_score=scenario_df["err_pert"])
+    records = _collect_degradation_forecast_samples(
+        model=wrapper,
+        dm=_degradation_datamodule(batch_size=2),
+        sample_rows=replay_rows,
+        test_metric="MSE",
+        eval_data_seed=eval_data_seed,
+        severity_distribution=resolve_severity_distribution("uniform"),
+        runtime_device=torch.device("cpu"),
+        runtime_precision=32,
+    )
+
+    assert len(records) == len(scenario_df)
+    clean_by_sample = clean_df.set_index("sample_id")["err_clean"]
+    scored = scenario_df.set_index(["sample_id", "pert_idx"])["err_pert"]
+    for record in records:
+        key = (record["sample_id"], record["pert_idx"])
+        expected_clean = float(clean_by_sample.loc[record["sample_id"]])
+        expected_perturbed = float(scored.loc[key])
+        assert record["clean_sample_score"] == pytest.approx(expected_clean, rel=1e-6)
+        assert record["perturbed_sample_score"] == pytest.approx(expected_perturbed, rel=1e-6)
+        clean_error = np.mean((record["prediction_clean"] - record["target"]) ** 2)
+        perturbed_error = np.mean((record["prediction_perturbed"] - record["target"]) ** 2)
+        assert clean_error == pytest.approx(expected_clean, rel=1e-5)
+        assert perturbed_error == pytest.approx(expected_perturbed, rel=1e-5)
