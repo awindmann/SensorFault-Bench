@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
 from utils.parsing import (
     join_data_root_path,
@@ -81,7 +81,7 @@ class DatasetSpec:
     key: str
     path: str
     split_mode: str
-    input_channels: Optional[Sequence[str]] = None
+    input_channels: Sequence[str]
     channel_groups: Mapping[str, Sequence[str]] = field(default_factory=dict)
     default_target: TargetLike = None
     description: Optional[str] = None
@@ -108,6 +108,12 @@ class DatasetSpec:
         self.path = normalized_path
         self.normalized_path = normalized_path
         self.split_mode = parse_dataset_split_mode(self.split_mode)
+        # Runs record the input order, so every entry lists its input columns.
+        if self.input_channels is None:
+            raise ValueError(
+                f"DatasetSpec[{self.key}] must list its input_channels in the order "
+                "the model receives them."
+            )
         (
             self._input_channels_tuple,
             self._continuous_channels_tuple,
@@ -118,13 +124,9 @@ class DatasetSpec:
             self.discrete_channels,
             context=f"DatasetSpec[{self.key}]",
         )
-        if self._input_channels_tuple is not None and not self._input_channels_tuple:
-            raise ValueError("input_channels cannot be empty; use None for 'all'.")
-        if (
-            self._input_channels_tuple is not None
-            and self._continuous_channels_tuple is None
-            and self._discrete_channels_tuple is None
-        ):
+        if not self._input_channels_tuple:
+            raise ValueError(f"DatasetSpec[{self.key}].input_channels must list at least one column.")
+        if self._continuous_channels_tuple is None and self._discrete_channels_tuple is None:
             self._continuous_channels_tuple = self._input_channels_tuple
             self._discrete_channels_tuple = ()
         validate_split_mode_batch_column(self.split_mode, self.batch_column)
@@ -284,19 +286,65 @@ def resolve_with_defaults(
     )
 
 
+def channel_order_tags(spec: ResolvedDatasetSpec) -> Mapping[str, str]:
+    """Return the ordered input and target channel tags of a dataset spec.
+
+    The data config signature compares channel sets, while these tags keep the
+    order in which the model receives inputs and emits targets.
+    """
+    if spec.input_channels is None:
+        raise ValueError(
+            f"Dataset '{spec.key}' must list its input_channels. Without an explicit "
+            "list, the inputs follow the file's column order, which the channel-order "
+            "tags cannot record."
+        )
+    # Without target_channels, the targets are the input channels in input order,
+    # which the input tag already records. Runs store an empty target tag then.
+    if spec.target_channels is None:
+        target_channels = ""
+    else:
+        target_channels = ";".join(spec.target_channels)
+    return {
+        "input_channels": ";".join(spec.input_channels),
+        "target_channels": target_channels,
+    }
+
+
+def require_run_channel_order(
+    run_tags: Mapping[str, Any],
+    spec: ResolvedDatasetSpec,
+    *,
+    run_id: str,
+) -> None:
+    """Require that a run was trained with the channel order of a dataset spec.
+
+    Channel order defines the model inputs and targets, so a run trained under
+    another order cannot be reused, extended, or evaluated on this data.
+    """
+    for key, expected_value in channel_order_tags(spec).items():
+        if key not in run_tags:
+            raise ValueError(f"Run {run_id} is missing required '{key}' tag.")
+        recorded_value = str(run_tags[key])
+        if recorded_value != expected_value:
+            raise ValueError(
+                f"Run {run_id} was trained with {key}={recorded_value!r}, but the "
+                f"current dataset specification has {key}={expected_value!r}. "
+                "Channel order defines the model inputs and targets, so the run "
+                "cannot be used with this data. Restore the channel order or "
+                "train under a new experiment prefix."
+            )
+
+
 def spec_to_tags(spec: ResolvedDatasetSpec, *, n_inputs: int, n_outputs: int) -> Mapping[str, str]:
-    target_channels = spec.target_channels or ()
     alias = spec.target_alias or ("all" if n_outputs == n_inputs else "custom")
-    input_channels = spec.input_channels or ()
     dataset_path = spec.relative_path if spec.relative_path is not None else spec.path
     tags = {
         "dataset_path": dataset_path,
         "split_mode": spec.split_mode,
         "target_alias": alias,
-        "target_channels": ";".join(target_channels),
         "target_channel_count": str(n_outputs),
         "input_channel_count": str(n_inputs),
-        "input_channels": ";".join(input_channels),
+        **channel_order_tags(spec),
     }
     if spec.continuous_channels is not None:
         tags["continuous_input_channel_count"] = str(len(spec.continuous_channels))
@@ -342,6 +390,8 @@ __all__ = [
     "DatasetRegistry",
     "TargetLike",
     "resolve_with_defaults",
+    "channel_order_tags",
+    "require_run_channel_order",
     "spec_to_tags",
     "filter_spec_tags",
 ]

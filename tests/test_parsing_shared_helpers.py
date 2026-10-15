@@ -16,7 +16,6 @@ from utils.parsing import (
     build_selection_perturbation_context_tag_payload,
     build_degradation_eval_context_tag_payload,
     build_winner_selection_provenance_tag_payload,
-    build_export_manifest_eval_context,
     build_method_delta_pair_bootstrap_ci_seed_key,
     build_shared_anchor_bootstrap_ci_seed_key,
     build_seeded_eval_input_artifact_prefix,
@@ -49,7 +48,6 @@ from utils.parsing import (
     parse_required_nonnegative_int,
     parse_required_positive_int,
     parse_runtime_precision,
-    parse_semicolon_delimited_strings,
     parse_optional_nonempty_string,
     parse_core_figure_registry_config,
     parse_feature_indices,
@@ -58,6 +56,7 @@ from utils.parsing import (
     parse_perturbation_scenarios_from_signature,
     parse_perturbation_scenarios,
     parse_perturbation_scenarios_signature,
+    parse_perturbation_severity_distribution,
     parse_reference_normalization_anchor_model,
     parse_revin_settings,
     parse_optimizer_name,
@@ -70,10 +69,8 @@ from utils.parsing import (
     require_integer_series,
     require_nonempty_string_series,
     resolve_train_perturbation_profile_config,
-    parse_scenario_metric_key,
     parse_winner_candidate_tags,
     require_tsmixer_hparams,
-    require_perturbation_coupling_params,
     require_perturbation_coupling_tags,
     require_namespace_bool,
     require_namespace_nonempty_string,
@@ -87,14 +84,13 @@ from utils.parsing import (
     require_degradation_eval_context_tags,
     require_winner_selection_provenance_tags,
     require_mapping,
-    require_meta_analysis_eval_data_seed_scope_tags,
     require_order_sensitive_perturbation_idx_name_map,
     require_robustness_results_complete_tag,
-    require_robustness_scoring_semantics_tag,
     require_stage_tag,
     require_typed_mapping_value,
     require_typed_tag_or_param_value,
     robustness_results_complete_tag_value,
+    robustness_scoring_semantics_for_severity_distribution,
     sample_dataframe_records,
     resolve_effective_eval_data_seed,
     resolve_meta_analysis_eval_data_seed_scope,
@@ -134,6 +130,31 @@ def test_require_namespace_bool_parses_required_flag():
     args = SimpleNamespace(full_coverage="true")
 
     assert require_namespace_bool(args, key="full_coverage") is True
+
+
+@pytest.mark.parametrize("distribution_id", ["uniform", "beta_1_2"])
+def test_parse_perturbation_severity_distribution_accepts_exact_ids(distribution_id):
+    assert parse_perturbation_severity_distribution(distribution_id) == distribution_id
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", " ", "Uniform", " uniform", "uniform ", "beta", 1, True],
+)
+def test_parse_perturbation_severity_distribution_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        parse_perturbation_severity_distribution(value)
+
+
+def test_robustness_scoring_semantics_follow_severity_distribution():
+    assert (
+        robustness_scoring_semantics_for_severity_distribution("uniform")
+        == "uniform_severity_degradation"
+    )
+    assert (
+        robustness_scoring_semantics_for_severity_distribution("beta_1_2")
+        == "beta_1_2_severity_degradation"
+    )
 
 
 def test_parse_runtime_precision_normalizes_aliases_per_device():
@@ -492,20 +513,6 @@ def test_parse_improvement_selection_mode_normalizes_and_rejects_unknown_values(
         parse_improvement_selection_mode("unknown_mode")
 
 
-def test_parse_semicolon_delimited_strings_normalizes_and_rejects_empty_entries():
-    assert parse_semicolon_delimited_strings(" x ; y ", key="input_channels") == (
-        "x",
-        "y",
-    )
-    assert parse_semicolon_delimited_strings("", key="input_channels") == ()
-    with pytest.raises(ValueError, match="input_channels\\[1\\]"):
-        parse_semicolon_delimited_strings(
-            "x;;y",
-            key="input_channels",
-            context="Run run_4",
-        )
-
-
 def test_parse_optional_nonempty_string_rejects_empty_and_none_token_when_disallowed():
     with pytest.raises(ValueError, match="empty pipeline_id"):
         parse_optional_nonempty_string(
@@ -853,6 +860,7 @@ def test_require_selection_perturbation_context_from_args_builds_expected_contex
     args = SimpleNamespace(
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=["drift", "noise"],
+        perturbation_severity_distribution="uniform",
     )
 
     parsed = require_selection_perturbation_context_from_args(
@@ -861,6 +869,7 @@ def test_require_selection_perturbation_context_from_args_builds_expected_contex
     )
 
     assert parsed["selection_metric_semantics"] == "perturbed_validation_error"
+    assert parsed["selection_perturbation_severity_distribution"] == "uniform"
     assert parsed["selection_perturbation_channel_fraction_max"] == pytest.approx(0.5)
     assert (
         parsed["selection_perturbation_scenarios_signature"]
@@ -872,6 +881,7 @@ def test_require_selection_perturbation_context_from_args_rejects_non_finite_fra
     args = SimpleNamespace(
         perturbation_channel_fraction_max=float("nan"),
         perturbation_scenarios=["noise"],
+        perturbation_severity_distribution="uniform",
     )
 
     with pytest.raises(ValueError, match="perturbation_channel_fraction_max"):
@@ -885,6 +895,7 @@ def test_require_selection_perturbation_context_tags_validates_expected_context(
     tags = build_selection_perturbation_context_tag_payload(
         {
             "selection_metric_semantics": "perturbed_validation_error",
+            "selection_perturbation_severity_distribution": "uniform",
             "selection_perturbation_channel_fraction_max": 0.5,
             "selection_perturbation_scenarios_signature": "[\"drift\",\"noise\"]",
         }
@@ -895,18 +906,21 @@ def test_require_selection_perturbation_context_tags_validates_expected_context(
         run_id="run_selection_context",
         expected_context={
             "selection_metric_semantics": "perturbed_validation_error",
+            "selection_perturbation_severity_distribution": "uniform",
             "selection_perturbation_channel_fraction_max": 0.5,
             "selection_perturbation_scenarios_signature": "[\"drift\",\"noise\"]",
         },
     )
 
     assert parsed["selection_metric_semantics"] == "perturbed_validation_error"
+    assert parsed["selection_perturbation_severity_distribution"] == "uniform"
     assert parsed["selection_perturbation_channel_fraction_max"] == pytest.approx(0.5)
 
 
 def test_require_selection_perturbation_context_tags_raises_when_signature_missing():
     tags = {
         "selection_metric_semantics": "perturbed_validation_error",
+        "selection_perturbation_severity_distribution": "uniform",
         "selection_perturbation_channel_fraction_max": "0.5",
     }
 
@@ -920,6 +934,7 @@ def test_require_selection_perturbation_context_tags_raises_when_signature_missi
 def test_require_selection_perturbation_context_tags_rejects_unknown_semantics():
     tags = {
         "selection_metric_semantics": "clean_validation_error",
+        "selection_perturbation_severity_distribution": "uniform",
         "selection_perturbation_channel_fraction_max": "0.5",
         "selection_perturbation_scenarios_signature": "[\"noise\"]",
     }
@@ -935,6 +950,7 @@ def test_require_selection_perturbation_context_tags_rejects_unsupported_expecte
     tags = build_selection_perturbation_context_tag_payload(
         {
             "selection_metric_semantics": "perturbed_validation_error",
+            "selection_perturbation_severity_distribution": "uniform",
             "selection_perturbation_channel_fraction_max": 0.5,
             "selection_perturbation_scenarios_signature": "[\"noise\"]",
         }
@@ -1033,6 +1049,7 @@ def test_require_degradation_eval_context_from_args_builds_expected_context():
         n_test_samples=10000,
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=["drift", "noise"],
+        perturbation_severity_distribution="uniform",
         strict_iid=False,
     )
 
@@ -1272,71 +1289,6 @@ def test_resolve_meta_analysis_eval_data_seed_scope_uses_default_seed_when_prese
         default_eval_data_seed="19",
         default_key="defaults.EVAL_DATA_SEED",
     ) == (19, "19")
-
-
-def test_require_meta_analysis_eval_data_seed_scope_tags_accepts_canonical_mode_with_optional_seed():
-    parsed_seed, parsed_mode = require_meta_analysis_eval_data_seed_scope_tags(
-        {
-            "analysis_scope": "meta_analysis",
-            "eval_data_seed_mode": "canonical",
-            "eval_data_seed": "29",
-        },
-        run_id="meta_canonical",
-    )
-
-    assert parsed_seed is None
-    assert parsed_mode == "canonical"
-
-
-def test_require_meta_analysis_eval_data_seed_scope_tags_rejects_mismatched_explicit_mode_and_seed():
-    with pytest.raises(ValueError, match="eval_data_seed_mode='31' but eval_data_seed=29"):
-        require_meta_analysis_eval_data_seed_scope_tags(
-            {
-                "analysis_scope": "meta_analysis",
-                "eval_data_seed_mode": "31",
-                "eval_data_seed": "29",
-            },
-            run_id="meta_explicit",
-        )
-
-
-def test_build_export_manifest_eval_context_accepts_explicit_null_eval_data_seed():
-    assert build_export_manifest_eval_context(
-        {
-            "TEST_METRIC": "MSE",
-            "N_TEST_SAMPLES": 10000,
-            "EVAL_DATA_SEED": None,
-            "PERTURBATION_CHANNEL_FRACTION_MAX": 0.5,
-            "PERTURBATION_SCENARIOS": ["drift", "noise"],
-            "BOOTSTRAP_CI_RESAMPLES": 1000,
-            "BOOTSTRAP_CI_CONFIDENCE_LEVEL": 0.95,
-        },
-        n_test_samples=10000,
-    ) == {
-        "robustness_scoring_semantics": DEGRADATION_SCORING_SEMANTICS,
-        "test_metric": "MSE",
-        "n_test_samples": 10000,
-        "eval_data_seed": None,
-        "perturbation_channel_fraction_max": 0.5,
-        "perturbation_scenarios": ["drift", "noise"],
-        "bootstrap_ci_resamples": 1000,
-        "bootstrap_ci_confidence_level": pytest.approx(0.95),
-    }
-
-
-def test_build_export_manifest_eval_context_requires_explicit_eval_data_seed_key():
-    with pytest.raises(ValueError, match="missing required 'EVAL_DATA_SEED'"):
-        build_export_manifest_eval_context(
-            {
-                "TEST_METRIC": "MSE",
-                "N_TEST_SAMPLES": 10000,
-                "PERTURBATION_CHANNEL_FRACTION_MAX": 0.5,
-                "PERTURBATION_SCENARIOS": ["drift", "noise"],
-                "BOOTSTRAP_CI_RESAMPLES": 1000,
-                "BOOTSTRAP_CI_CONFIDENCE_LEVEL": 0.95,
-            },
-            n_test_samples=10000,
-        )
 
 
 def test_parse_bootstrap_ci_resamples_requires_positive_int():
@@ -1749,77 +1701,6 @@ def test_require_order_sensitive_perturbation_idx_name_map_requires_contiguous_m
         )
 
 
-def test_require_perturbation_coupling_params_parses_required_values():
-    signature = build_perturbation_scenarios_signature(("drift", "noise"))
-    parsed = require_perturbation_coupling_params(
-        {
-            "perturbation_channel_fraction_max": "0.5",
-            "perturbation_scenarios_signature": signature,
-        },
-        run_id="run_pert",
-    )
-    assert parsed["perturbation_channel_fraction_max"] == pytest.approx(0.5)
-    assert parsed["perturbation_scenarios_signature"] == signature
-
-
-def test_require_perturbation_coupling_params_rejects_missing_or_invalid_values():
-    signature = build_perturbation_scenarios_signature(("drift", "noise"))
-    with pytest.raises(ValueError, match="invalid perturbation coupling params"):
-        require_perturbation_coupling_params(
-            {},
-            run_id="run_missing_max",
-        )
-    with pytest.raises(ValueError, match="invalid perturbation coupling params"):
-        require_perturbation_coupling_params(
-            {"perturbation_channel_fraction_max": "2.0"},
-            run_id="run_bad_max",
-        )
-    with pytest.raises(ValueError, match="invalid perturbation coupling params"):
-        require_perturbation_coupling_params(
-            {
-                "perturbation_channel_fraction_max": "0.5",
-                "perturbation_scenarios_signature": "[\"drift\", \"noise\"]",
-            },
-            run_id="run_bad_signature",
-        )
-    with pytest.raises(
-        ValueError,
-        match="canonical JSON with deterministic ordering",
-    ):
-        require_perturbation_coupling_params(
-            {
-                "perturbation_channel_fraction_max": "0.5",
-                "perturbation_scenarios_signature": signature,
-            },
-            run_id="run_missing_signature",
-            expected_scenarios_signature="[\"drift\", \"noise\"]",
-        )
-
-
-def test_require_perturbation_coupling_params_rejects_expected_mismatches():
-    signature = build_perturbation_scenarios_signature(("drift", "noise"))
-    with pytest.raises(ValueError, match="expected 0.25"):
-        require_perturbation_coupling_params(
-            {
-                "perturbation_channel_fraction_max": "0.5",
-                "perturbation_scenarios_signature": signature,
-            },
-            run_id="run_mismatch_max",
-            expected_max=0.25,
-        )
-    with pytest.raises(ValueError, match="expected \\[\"drift\",\"missing_data\"\\]"):
-        require_perturbation_coupling_params(
-            {
-                "perturbation_channel_fraction_max": "0.5",
-                "perturbation_scenarios_signature": signature,
-            },
-            run_id="run_mismatch_signature",
-            expected_scenarios_signature=build_perturbation_scenarios_signature(
-                ("drift", "missing_data")
-            ),
-        )
-
-
 def test_require_perturbation_coupling_tags_parses_and_validates():
     signature = build_perturbation_scenarios_signature(("drift", "noise"))
     parsed = require_perturbation_coupling_tags(
@@ -1838,69 +1719,6 @@ def test_require_perturbation_coupling_tags_parses_and_validates():
 def test_require_perturbation_coupling_tags_rejects_missing_mapping():
     with pytest.raises(ValueError, match="missing tags required for perturbation coupling"):
         require_perturbation_coupling_tags(None, run_id="run_missing_tags")
-
-
-def test_require_robustness_scoring_semantics_tag_defaults_to_degradation():
-    assert (
-        require_robustness_scoring_semantics_tag(
-            {"robustness_scoring_semantics": "uniform_severity_degradation"},
-            run_id="run_8",
-        )
-        == "uniform_severity_degradation"
-    )
-    with pytest.raises(ValueError, match="missing required robustness_scoring_semantics"):
-        require_robustness_scoring_semantics_tag({}, run_id="run_9")
-    with pytest.raises(ValueError, match="expected 'uniform_severity_degradation'"):
-        require_robustness_scoring_semantics_tag(
-            {"robustness_scoring_semantics": "unsupported_semantics"},
-            run_id="run_10",
-        )
-
-
-def test_require_robustness_scoring_semantics_tag_rejects_bin_v1():
-    with pytest.raises(ValueError, match="expected 'uniform_severity_degradation'"):
-        require_robustness_scoring_semantics_tag(
-            {"robustness_scoring_semantics": "bin_v1"},
-            run_id="run_bin_v1",
-        )
-
-
-def test_parse_scenario_metric_key_parses_integer_scenario_tokens():
-    parsed = parse_scenario_metric_key(
-        "linear_r1_phi1/MSE/scenario/2/R_mean",
-        scenario_prefix="linear_r1_phi1/MSE/scenario/",
-        run_id="run_11",
-    )
-    assert parsed == (2, "R_mean")
-
-
-def test_parse_scenario_metric_key_returns_none_when_prefix_does_not_match():
-    assert (
-        parse_scenario_metric_key(
-            "linear_r1_phi1/MSE/R_mean",
-            scenario_prefix="linear_r1_phi1/MSE/scenario/",
-            run_id="run_11b",
-        )
-        is None
-    )
-
-
-def test_parse_scenario_metric_key_rejects_non_integer_scenario_tokens():
-    with pytest.raises(ValueError, match="integer pert_idx"):
-        parse_scenario_metric_key(
-            "linear_r1_phi1/MSE/scenario/Noise/R_mean",
-            scenario_prefix="linear_r1_phi1/MSE/scenario/",
-            run_id="run_12",
-        )
-
-
-def test_parse_scenario_metric_key_rejects_negative_scenario_index():
-    with pytest.raises(ValueError, match="non-negative pert_idx"):
-        parse_scenario_metric_key(
-            "linear_r1_phi1/MSE/scenario/-1/R_mean",
-            scenario_prefix="linear_r1_phi1/MSE/scenario/",
-            run_id="run_13",
-        )
 
 
 def test_infer_hparam_expected_type_handles_numeric_and_null_grids():

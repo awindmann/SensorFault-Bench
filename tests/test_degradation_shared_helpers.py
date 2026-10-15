@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -5,10 +8,17 @@ from visualizations.semantics import (
     PlotSemanticsRecord,
     require_plot_semantics_mapping,
 )
+from utils.parsing import (
+    format_fixed_channel_fraction_token,
+    robustness_scoring_semantics_for_severity_distribution,
+)
 from utils.scoring import (
+    build_canonical_degradation_context_signature,
+    build_fixed_channel_fraction_artifact_prefix,
+    build_fixed_channel_fraction_context_signature,
     build_fixed_channel_fraction_metric_key,
+    download_validated_fixed_channel_fraction_artifact_bundle,
     build_degradation_scenario_metric_key,
-    extract_required_degradation_scenario_metric_with_ci,
     extract_required_degradation_scenario_metrics,
     extract_required_overall_degradation_metrics,
     require_logged_fixed_channel_fraction_metric_bundle,
@@ -111,19 +121,12 @@ def test_extract_required_degradation_scenario_metrics_and_ci_require_integer_in
         test_metric="MSE",
         scenario_idx=1,
     )
-    value, ci_lo, ci_hi = extract_required_degradation_scenario_metric_with_ci(
-        metrics,
-        run_id="run_degradation",
-        test_metric="MSE",
-        scenario_idx=1,
-        metric_name="D",
-    )
 
     assert extracted["err_pert"] == pytest.approx(0.72)
     assert extracted["err_pert_CI_hi"] == pytest.approx(0.77)
-    assert value == pytest.approx(2.4)
-    assert ci_lo == pytest.approx(2.1)
-    assert ci_hi == pytest.approx(2.7)
+    assert extracted["D"] == pytest.approx(2.4)
+    assert extracted["D_CI_lo"] == pytest.approx(2.1)
+    assert extracted["D_CI_hi"] == pytest.approx(2.7)
 
 
 def test_require_logged_degradation_metric_bundle_rejects_inconsistent_worst_scenario():
@@ -154,6 +157,69 @@ def test_require_logged_degradation_metric_bundle_rejects_inconsistent_run_level
     metrics[metric_key] = bad_value
 
     with pytest.raises(ValueError, match=message_fragment):
+        require_logged_degradation_metric_bundle(
+            metrics,
+            tags={"degradation/MSE/worst_scenario": "noise"},
+            params={"degradation/MSE/worst_scenario": "noise"},
+            run_id="run_degradation",
+            test_metric="MSE",
+            expected_idx_to_name={0: "drift", 1: "noise"},
+        )
+
+
+def test_require_logged_degradation_metric_bundle_accepts_reevaluation_with_fewer_scenarios():
+    metrics = _logged_degradation_metrics()
+    # Reevaluating with the first scenario only overwrites the run-level metrics
+    # and scenario 0, while MLflow keeps the metrics of scenario 1.
+    metrics.update(
+        {
+            "degradation/MSE/D_w": 1.6,
+            "degradation/MSE/D_mean": 1.6,
+            "degradation/MSE/err_pert_ws": 0.27,
+            "degradation/MSE/err_pert_mean": 0.27,
+        }
+    )
+
+    worst_scenario = require_logged_degradation_metric_bundle(
+        metrics,
+        tags={"degradation/MSE/worst_scenario": "drift"},
+        params={"degradation/MSE/worst_scenario": "drift"},
+        run_id="run_degradation",
+        test_metric="MSE",
+        expected_idx_to_name={0: "drift"},
+    )
+
+    assert worst_scenario == "drift"
+
+    del metrics["degradation/MSE/scenario/0/D_CI_lo"]
+    with pytest.raises(ValueError, match="missing required robustness metric"):
+        require_logged_degradation_metric_bundle(
+            metrics,
+            tags={"degradation/MSE/worst_scenario": "drift"},
+            params={"degradation/MSE/worst_scenario": "drift"},
+            run_id="run_degradation",
+            test_metric="MSE",
+            expected_idx_to_name={0: "drift"},
+        )
+
+
+@pytest.mark.parametrize(
+    "extra_key",
+    [
+        "degradation/MSE/D_extra",
+        "degradation/MSE/scenario/1/unknown",
+        "degradation/MSE/scenario/2/unknown",
+        "degradation/MSE/scenario/02/D",
+        "degradation/MSE/scenario/x/D",
+    ],
+)
+def test_require_logged_degradation_metric_bundle_rejects_keys_outside_the_bundle(
+    extra_key: str,
+):
+    metrics = _logged_degradation_metrics()
+    metrics[extra_key] = 1.0
+
+    with pytest.raises(ValueError, match="unexpected canonical `degradation` metric keys"):
         require_logged_degradation_metric_bundle(
             metrics,
             tags={"degradation/MSE/worst_scenario": "noise"},
@@ -804,6 +870,68 @@ def test_score_degradation_artifact_bundle_rejects_non_positive_clean_denominato
         )
 
 
+def test_score_degradation_artifact_bundle_accepts_interval_that_excludes_point():
+    n_samples = 10
+    clean_df = pd.DataFrame(
+        {
+            "sample_id": range(n_samples),
+            "source_sample_idx": range(n_samples),
+            "err_clean": [1.0] * n_samples,
+        }
+    )
+    scenario_samples_df = pd.DataFrame(
+        {
+            "sample_id": range(n_samples),
+            "source_sample_idx": range(n_samples),
+            "pert_idx": [0] * n_samples,
+            "scenario": ["drift"] * n_samples,
+            "severity": [0.5] * n_samples,
+            "err_pert": [float(value) for value in range(1, n_samples + 1)],
+        }
+    )
+
+    _, _, scenario_summary, _, _ = score_degradation_artifact_bundle(
+        clean_df,
+        scenario_samples_df,
+        expected_idx_to_name={0: "drift"},
+        bootstrap_resamples=10,
+        bootstrap_confidence_level=0.95,
+        bootstrap_seed=75,
+        context_name="degradation_bundle",
+    )
+
+    row = scenario_summary.iloc[0]
+    assert row["err_pert"] == pytest.approx(5.5)
+    assert row["err_pert"] < row["err_pert_CI_lo"] <= row["err_pert_CI_hi"]
+
+
+def test_validate_degradation_scenario_summary_rejects_reversed_interval():
+    df = pd.DataFrame(
+        [
+            {
+                "pert_idx": 0,
+                "scenario": "drift",
+                "n_test_samples": 2,
+                "err_clean_global": 0.2,
+                "err_pert": 0.3,
+                "err_pert_CI_lo": 0.4,
+                "err_pert_CI_hi": 0.2,
+                "D": 1.5,
+                "D_CI_lo": 1.0,
+                "D_CI_hi": 2.0,
+            },
+        ]
+    )
+
+    with pytest.raises(ValueError, match="invalid err_pert confidence interval ordering"):
+        validate_degradation_scenario_summary(
+            df,
+            expected_idx_to_name={0: "drift"},
+            expected_n_test_samples=2,
+            context_name="scenario_summary.csv",
+        )
+
+
 def _fixed_channel_fraction_sample_frames():
     clean_df = pd.DataFrame(
         [
@@ -1020,4 +1148,168 @@ def test_require_logged_fixed_channel_fraction_bundle_validates_aggregate_metric
             fixed_channel_fraction=fixed_fraction,
             perturbation_channel_fraction_max=max_fraction,
             expected_idx_to_name={0: "drift", 1: "missing_data"},
+        )
+
+
+def test_require_logged_fixed_channel_fraction_bundle_accepts_reevaluation_with_fewer_scenarios():
+    test_metric = "MSE"
+    fixed_fraction = 0.5
+    max_fraction = 0.5
+    prefix = "fixed_channel_fraction/fraction_0p5/MSE"
+    metrics = {
+        key: 0.0
+        for key in required_fixed_channel_fraction_metric_keys(
+            test_metric=test_metric,
+            fixed_channel_fraction=fixed_fraction,
+            perturbation_channel_fraction_max=max_fraction,
+            scenario_indices=(0, 1),
+        )
+    }
+    # The bundle of the reevaluation with the first scenario only. The metrics
+    # of scenario 1 remain from the earlier evaluation.
+    for metric_name, value in {"D_w": 2.0, "D_mean": 2.0, "err_pert_ws": 3.0, "err_pert_mean": 3.0}.items():
+        metrics[f"{prefix}/{metric_name}"] = value
+    metrics[f"{prefix}/scenario/0/D"] = 2.0
+    metrics[f"{prefix}/scenario/0/err_pert"] = 3.0
+
+    worst_scenario = require_logged_fixed_channel_fraction_metric_bundle(
+        metrics,
+        tags={f"{prefix}/worst_scenario": "drift"},
+        run_id="run_fixed_fraction",
+        test_metric=test_metric,
+        fixed_channel_fraction=fixed_fraction,
+        perturbation_channel_fraction_max=max_fraction,
+        expected_idx_to_name={0: "drift"},
+    )
+
+    assert worst_scenario == "drift"
+
+    metrics[f"{prefix}/scenario/1/unknown"] = 1.0
+    with pytest.raises(ValueError, match="unexpected fixed-channel-fraction metric keys"):
+        require_logged_fixed_channel_fraction_metric_bundle(
+            metrics,
+            tags={f"{prefix}/worst_scenario": "drift"},
+            run_id="run_fixed_fraction",
+            test_metric=test_metric,
+            fixed_channel_fraction=fixed_fraction,
+            perturbation_channel_fraction_max=max_fraction,
+            expected_idx_to_name={0: "drift"},
+        )
+
+
+class _ArtifactClient:
+    """Serve logged artifact files from memory, keyed by artifact path."""
+
+    def __init__(self, files: dict[str, str]):
+        self.files = files
+
+    def download_artifacts(self, run_id, artifact_path, dst_path):
+        local_path = Path(dst_path) / artifact_path
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_text(self.files[artifact_path], encoding="utf-8")
+        return str(local_path)
+
+
+def _canonical_context_signature(severity_distribution: str) -> str:
+    return build_canonical_degradation_context_signature(
+        degradation_eval_context={
+            "robustness_scoring_semantics": (
+                robustness_scoring_semantics_for_severity_distribution(severity_distribution)
+            ),
+            "test_metric": "MSE",
+            "eval_data_seed": 7,
+            "n_test_samples": 2,
+        },
+        bootstrap_ci_context={
+            "bootstrap_ci_semantics": "shared_anchor_percentile",
+            "bootstrap_ci_resamples": 99,
+            "bootstrap_ci_confidence_level": 0.95,
+            "bootstrap_ci_seed": 5,
+        },
+        perturbation_scenario_params_signature="params-signature",
+    )
+
+
+def _fixed_channel_fraction_bundle_client() -> tuple[_ArtifactClient, str]:
+    """Build a fixed-fraction bundle with the context keys the evaluator writes."""
+    clean_df, scenario_samples_df, scenario_summary_df = (
+        _fixed_channel_fraction_sample_frames()
+    )
+    artifact_prefix = build_fixed_channel_fraction_artifact_prefix(
+        test_metric="MSE",
+        eval_data_seed=7,
+        fixed_channel_fraction=0.5,
+        perturbation_channel_fraction_max=0.5,
+    )
+    context_payload = {
+        "evaluation_family": "fixed_channel_fraction",
+        "fixed_channel_fraction": 0.5,
+        "fixed_channel_fraction_token": format_fixed_channel_fraction_token(
+            0.5,
+            max_value=0.5,
+        ),
+        "test_metric": "MSE",
+        "eval_data_seed": 7,
+        "n_test_samples": 2,
+        "perturbation_channel_fraction_max": 0.5,
+        "perturbation_scenarios_signature": "scenarios-signature",
+        "perturbation_scenarios_count": 2,
+        "perturbation_idx_name_map": {"0": "drift", "1": "missing_data"},
+        "perturbation_scenario_params_signature": "params-signature",
+        "canonical_context_signature": _canonical_context_signature("uniform"),
+        "bootstrap_ci_semantics": "shared_anchor_percentile",
+        "bootstrap_ci_resamples": 99,
+        "bootstrap_ci_confidence_level": 0.95,
+        "bootstrap_ci_seed": 5,
+        "artifact_prefix": artifact_prefix,
+    }
+    files = {
+        f"{artifact_prefix}/clean_test_samples.csv": clean_df.to_csv(index=False),
+        f"{artifact_prefix}/scenario_samples.csv": scenario_samples_df.to_csv(index=False),
+        f"{artifact_prefix}/scenario_summary.csv": scenario_summary_df.to_csv(index=False),
+        f"{artifact_prefix}/context.json": json.dumps(context_payload),
+    }
+    return _ArtifactClient(files), build_fixed_channel_fraction_context_signature(
+        context_payload
+    )
+
+
+def _download_fixed_channel_fraction_bundle(
+    client: _ArtifactClient,
+    *,
+    context_signature: str,
+    canonical_severity_distribution: str,
+):
+    return download_validated_fixed_channel_fraction_artifact_bundle(
+        client,
+        run_id="run_fixed_fraction",
+        test_metric="MSE",
+        eval_data_seed=7,
+        fixed_channel_fraction=0.5,
+        perturbation_channel_fraction_max=0.5,
+        expected_idx_to_name={0: "drift", 1: "missing_data"},
+        expected_n_test_samples=2,
+        expected_context_signature=context_signature,
+        expected_canonical_context_signature=_canonical_context_signature(
+            canonical_severity_distribution
+        ),
+        context_name="fixed-fraction bundle",
+    )
+
+
+def test_fixed_channel_fraction_bundle_binds_scoring_semantics_through_canonical_context():
+    client, context_signature = _fixed_channel_fraction_bundle_client()
+
+    _, _, scenario_summary, _ = _download_fixed_channel_fraction_bundle(
+        client,
+        context_signature=context_signature,
+        canonical_severity_distribution="uniform",
+    )
+
+    assert scenario_summary["scenario"].tolist() == ["drift", "missing_data"]
+    with pytest.raises(ValueError, match="canonical_context_signature"):
+        _download_fixed_channel_fraction_bundle(
+            client,
+            context_signature=context_signature,
+            canonical_severity_distribution="beta_1_2",
         )

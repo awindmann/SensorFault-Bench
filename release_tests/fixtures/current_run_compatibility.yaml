@@ -1,0 +1,375 @@
+common_tags: &common_tags
+  dataset: ETTh1
+  data_config_signature: sig_benchmark_etth1_96_96
+  model_architecture: GRU
+  loader_kind: GRU
+  best_model: "true"
+  backbone_current: "true"
+  robustness_scoring_semantics: uniform_severity_degradation
+  seed_master: "42"
+  seed_data: "101"
+  seed_model: "202"
+  seed_eval: "303"
+  seed_policy: v2
+  test_metric: MSE
+  n_test_samples: "3000"
+  eval_data_seed: "101"
+  perturbation_channel_fraction_max: "0.5"
+  perturbation_scenarios_signature: '["drift","noise"]'
+  perturbation_scenarios_count: "2"
+  perturbation_idx_name_map: '{"0":"drift","1":"noise"}'
+  bootstrap_ci_semantics: shared_anchor_percentile
+  bootstrap_ci_resamples: "1000"
+  bootstrap_ci_confidence_level: "0.95"
+  bootstrap_ci_seed: "123456"
+  robustness_results_complete: "true"
+
+common_params: &common_params
+  tested: "true"
+
+gru_hparams: &gru_hparams
+  d_hidden: "128"
+  n_layers: "2"
+  autoregressive: "false"
+  dropout: "0.1"
+  lr: "0.001"
+
+runs:
+  - id: kept_baseline_gru
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.120
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_gru_seed2
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      seed_model: "203"
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.121
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_gru_seed3
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      seed_model: "204"
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.122
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_beijing_gru
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      dataset: BeijingAir_Tiantan
+      data_config_signature: sig_benchmark_beijingair_96_96
+      seed_data: "111"
+      eval_data_seed: "111"
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.126
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_penmanshiel_gru
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      dataset: Penmanshiel_Hourly_WT08
+      data_config_signature: sig_benchmark_penmanshiel_96_96
+      seed_data: "112"
+      eval_data_seed: "112"
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.127
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_traffic_gru
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      dataset: traffic
+      data_config_signature: sig_benchmark_traffic_96_96
+      seed_data: "113"
+      eval_data_seed: "113"
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.128
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_dlinear
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: *common_tags
+      model_architecture: DLinear
+      loader_kind: DLinear
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.121
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_moderntcn
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: *common_tags
+      model_architecture: ModernTCN
+      loader_kind: ModernTCN
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.122
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_patchtst
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: *common_tags
+      model_architecture: PatchTST
+      loader_kind: PatchTST
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.123
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_tsmixer
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: *common_tags
+      model_architecture: TSMixer
+      loader_kind: TSMixer
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.124
+    params:
+      <<: *common_params
+
+  - id: kept_baseline_seasonal_naive
+    category: baseline
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: *common_tags
+      model_architecture: SeasonalNaive
+      loader_kind: SeasonalNaive
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+    metrics:
+      best_val_loss: 0.125
+    params:
+      <<: *common_params
+
+  - id: kept_randomized_training_gru
+    category: train_kind
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      stage: train
+      pipeline_id: rt_spaceraw_std0.1_channelscontinuous
+      pipeline_method: randomized_training
+      pipeline_kind: train
+      robustness_method: randomized_training
+      base_pipeline_method: baseline
+      baseline_hparams_run_id: kept_baseline_gru
+      hparams_mode: inherit_baseline
+    metrics:
+      best_val_loss: 0.115
+    params:
+      <<: *common_params
+
+  - id: kept_adversarial_training_gru
+    category: train_kind
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      stage: train
+      pipeline_id: advtrain_eps0.1_steps5_alpha0.02_channelsall
+      pipeline_method: adversarial_training
+      pipeline_kind: train
+      robustness_method: adversarial_training
+      base_pipeline_method: baseline
+      baseline_hparams_run_id: kept_baseline_gru
+      hparams_mode: inherit_baseline
+    metrics:
+      best_val_loss: 0.118
+    params:
+      <<: *common_params
+
+  - id: kept_adaptive_robust_loss_gru
+    category: train_kind
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      stage: train
+      pipeline_id: arl_alo0.001_ainit1.0_slo1e-05_sinit1.0
+      pipeline_method: adaptive_robust_loss
+      pipeline_kind: train
+      robustness_method: adaptive_robust_loss
+      base_pipeline_method: baseline
+      baseline_hparams_run_id: kept_baseline_gru
+      hparams_mode: inherit_baseline
+    metrics:
+      best_val_loss: 0.116
+    params:
+      <<: *common_params
+
+  - id: kept_fault_augmentation_gru
+    category: train_kind
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      stage: train
+      pipeline_id: fa_profholdout_simple_mix1.0_sev1.0_frac0.1
+      pipeline_method: fault_augmentation
+      pipeline_kind: train
+      robustness_method: fault_augmentation
+      base_pipeline_method: baseline
+      baseline_hparams_run_id: kept_baseline_gru
+      hparams_mode: inherit_baseline
+    metrics:
+      best_val_loss: 0.117
+    params:
+      <<: *common_params
+
+  - id: kept_revin_gru
+    category: revin
+    artifact_layout: root_epoch_checkpoint
+    tags:
+      <<: [*common_tags, *gru_hparams]
+      stage: train
+      pipeline_id: revin_affineTrue_eps1e-5
+      pipeline_method: revin
+      pipeline_kind: train
+      robustness_method: revin
+      base_pipeline_method: baseline
+      baseline_hparams_run_id: kept_baseline_gru
+      hparams_mode: inherit_baseline
+    metrics:
+      best_val_loss: 0.114
+    params:
+      <<: *common_params
+
+  - id: kept_ensemble_gru
+    category: wrap_kind
+    artifact_layout: model_checkpoints
+    tags:
+      <<: *common_tags
+      stage: improve
+      pipeline_id: ensemble_top3_median
+      pipeline_method: ensemble
+      pipeline_kind: wrap
+      robustness_method: ensemble
+      loader_kind: Ensemble
+      base_pipeline_method: baseline
+      backbone_run_ids: kept_baseline_gru,kept_baseline_gru_seed2,kept_baseline_gru_seed3
+    metrics:
+      MSE_val: 0.110
+    params:
+      <<: *common_params
+
+  - id: kept_randomized_smoothing_gru
+    category: randomized_smoothing
+    artifact_layout: model_checkpoints
+    tags:
+      <<: *common_tags
+      stage: improve
+      pipeline_id: rs_backbonebaseline_std0.5_samples10_alpha0.35
+      pipeline_method: randomized_smoothing
+      pipeline_kind: wrap
+      robustness_method: randomized_smoothing
+      loader_kind: RandomizedSmoothing
+      base_pipeline_method: baseline
+      backbone_run_id: kept_baseline_gru
+    metrics:
+      MSE_val: 0.112
+    params:
+      <<: *common_params
+
+  - id: kept_chronos2_pretrained
+    category: pretrained
+    artifact_layout: pretrained_snapshot
+    tags:
+      <<: *common_tags
+      model_architecture: Chronos2
+      loader_kind: pretrained
+      stage: train
+      pipeline_id: baseline
+      pipeline_method: baseline
+      pipeline_kind: train
+      robustness_method: baseline
+      input_channel_count: "7"
+      target_channel_count: "7"
+    metrics:
+      best_val_loss: 0.130
+    params:
+      <<: *common_params
+      d_seq_in: "96"
+      d_seq_out: "96"
+      target_indices: "null"
+      chronos_model_id: amazon/chronos-t5-tiny
+      loss: MSE

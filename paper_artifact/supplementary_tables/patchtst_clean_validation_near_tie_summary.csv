@@ -1,0 +1,3 @@
+branch,n_configurations,mean_MSE_c,mean_D_w,mean_MSE_w,worst_scenario
+d_model_128_and_learning_rate_0.001,4,0.3404397752043148,2.3884675455892794,0.8110146412882666,spike
+other_near_tied_configurations,10,0.3364088639657243,1.331697416705909,0.4479217628719163,noise

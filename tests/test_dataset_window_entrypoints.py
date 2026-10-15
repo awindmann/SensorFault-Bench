@@ -92,6 +92,7 @@ def _build_run_testing_parser():
     parser.add_argument("--raise-error", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--full-coverage", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--rerun", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--perturbation-severity-distribution", default="uniform")
     parser.add_argument("--method", nargs="+", default=None)
     parser.add_argument("--benchmark-methods", nargs="*", default=["baseline"])
     parser.add_argument("--model", nargs="+", default=None)

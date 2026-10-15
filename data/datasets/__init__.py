@@ -4,6 +4,8 @@ from .base import (
     ResolvedDatasetSpec,
     TargetLike,
     resolve_with_defaults,
+    channel_order_tags,
+    require_run_channel_order,
     spec_to_tags,
     filter_spec_tags,
 )
@@ -16,6 +18,8 @@ __all__ = [
     "ResolvedDatasetSpec",
     "TargetLike",
     "resolve_with_defaults",
+    "channel_order_tags",
+    "require_run_channel_order",
     "spec_to_tags",
     "filter_spec_tags",
 ]

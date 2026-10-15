@@ -1,13 +1,82 @@
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
+
 import torch
+
+from utils.parsing import parse_perturbation_severity_distribution
 
 
 ##### severity probability #####
 def uniform_severity(rng: torch.Generator) -> float:
     """S ~ U(0, 1)."""
     return torch.rand((), generator=rng).item()
+
+
+def beta_1_2_severity(rng: torch.Generator) -> float:
+    """S ~ Beta(1, 2), sampled by inverse CDF from one uniform draw."""
+    uniform_value = float(torch.rand((), generator=rng).item())
+    return 1.0 - math.sqrt(1.0 - uniform_value)
+
+
+@dataclass(frozen=True)
+class BoundedUniformSeverity:
+    """S ~ U(0, bound).
+
+    A module-level callable, so data-loader workers started with `spawn` can
+    pickle datasets that hold it.
+    """
+
+    bound: float
+
+    def __call__(self, rng: torch.Generator) -> float:
+        return float(torch.rand((), generator=rng).item() * self.bound)
+
+
+def resolve_severity_distribution(
+    distribution_id: Any,
+    *,
+    key: str = "perturbation_severity_distribution",
+) -> Callable[[torch.Generator], float]:
+    """Resolve one parsed severity-distribution id to its sampling callable."""
+    parsed_distribution_id = parse_perturbation_severity_distribution(distribution_id, key=key)
+    if parsed_distribution_id == "uniform":
+        return uniform_severity
+    if parsed_distribution_id == "beta_1_2":
+        return beta_1_2_severity
+    raise AssertionError(
+        f"Unhandled perturbation severity sampling distribution {parsed_distribution_id!r}."
+    )
+
+
+def sample_validated_severity(
+    severity_distribution: Callable[[torch.Generator], float],
+    rng: torch.Generator,
+    *,
+    context: str,
+) -> float:
+    """Sample and validate one finite severity in [0, 1]."""
+    if not callable(severity_distribution):
+        raise ValueError(
+            f"{context} severity sampling distribution must be callable, got "
+            f"{type(severity_distribution).__name__}."
+        )
+    sampled = severity_distribution(rng)
+    try:
+        severity = float(sampled)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{context} severity sampling distribution returned non-numeric value {sampled!r}."
+        ) from exc
+    if not math.isfinite(severity):
+        raise ValueError(
+            f"{context} severity sampling distribution returned non-finite value {severity}."
+        )
+    if severity < 0.0 or severity > 1.0:
+        raise ValueError(
+            f"{context} severity sampling distribution returned out-of-range value {severity}."
+        )
+    return severity
 
 
 def _require_probability_vector(
@@ -34,40 +103,6 @@ def _require_probability_vector(
     if total <= 0.0:
         raise ValueError("p_perturbation must have positive total mass.")
     return probs / total
-
-
-def _normalize_severity_laws(
-    severity_laws: Mapping[str, Callable[[torch.Generator], float]] | None,
-    *,
-    perturbation_names: set[str],
-) -> dict[str, Callable[[torch.Generator], float]]:
-    if severity_laws is None:
-        return {}
-    if not isinstance(severity_laws, Mapping):
-        raise ValueError("severity_laws must be a mapping from perturbation name to callable.")
-
-    normalized: dict[str, Callable[[torch.Generator], float]] = {}
-    unknown_names: list[str] = []
-    for raw_name, law in severity_laws.items():
-        name = str(raw_name).strip()
-        if not name:
-            raise ValueError("severity_laws contains an empty perturbation name key.")
-        if name not in perturbation_names:
-            unknown_names.append(name)
-            continue
-        if not callable(law):
-            raise ValueError(
-                f"severity_laws['{name}'] must be callable, got {type(law).__name__}."
-            )
-        normalized[name] = law
-
-    if unknown_names:
-        known = ", ".join(sorted(perturbation_names))
-        raise ValueError(
-            "severity_laws contains unknown perturbation names: "
-            f"{sorted(unknown_names)}. Known perturbations: {known}."
-        )
-    return normalized
 
 
 ##### perturbation-severity sampler #####
@@ -131,7 +166,7 @@ class PerturbationSeveritySampler:
         self,
         perturbations: list,
         p_perturbation: torch.Tensor,
-        severity_laws: Mapping[str, Callable[[torch.Generator], float]] | None = None,
+        severity_distribution: Callable[[torch.Generator], float],
     ):
         if not perturbations:
             raise ValueError("perturbations must be a non-empty list.")
@@ -154,33 +189,21 @@ class PerturbationSeveritySampler:
             p_perturbation,
             n_expected=len(perturbations),
         )
-        self.severity_laws = _normalize_severity_laws(
-            severity_laws,
-            perturbation_names=perturbation_names,
-        )
+        if not callable(severity_distribution):
+            raise ValueError(
+                "severity_distribution must be callable, got "
+                f"{type(severity_distribution).__name__}."
+            )
+        self.severity_distribution = severity_distribution
 
     def __call__(self, rng: torch.Generator):
         idx = int(torch.multinomial(self.prob, 1, generator=rng).item())
         pert = self.perturbations[idx]
-        severity_law = self.severity_laws.get(pert.name)
-        if severity_law is None:
-            sev = uniform_severity(rng)
-        else:
-            sev = severity_law(rng)
-        try:
-            sev = float(sev)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Severity law for perturbation '{pert.name}' returned non-numeric value {sev!r}."
-            ) from exc
-        if not math.isfinite(sev):
-            raise ValueError(
-                f"Severity law for perturbation '{pert.name}' returned non-finite value {sev}."
-            )
-        if sev < 0.0 or sev > 1.0:
-            raise ValueError(
-                f"Severity law for perturbation '{pert.name}' returned out-of-range value {sev}."
-            )
+        sev = sample_validated_severity(
+            self.severity_distribution,
+            rng,
+            context=f"Severity sampling distribution for perturbation '{pert.name}'",
+        )
         return SampledPerturbationSeverity(
             perturbation=pert,
             severity=sev,

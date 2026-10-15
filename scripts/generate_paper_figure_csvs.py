@@ -156,7 +156,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Generate the three paper figure-input CSVs from the bundled "
-            "paper_artifact manifest and primary result tables."
+            "paper_artifact manifest and the tables of the default configuration."
         )
     )
     parser.add_argument(
@@ -410,15 +410,15 @@ def load_benchmark_scope_config(path: Path) -> BenchmarkScopeConfig:
     )
 
 
-def _manifest_primary_source_id(manifest: dict[str, Any]) -> str:
+def _manifest_default_source_id(manifest: dict[str, Any]) -> str:
     return _require_string(
-        manifest.get("primary_source_id"),
-        key="MANIFEST.json primary_source_id",
+        manifest.get("default_configuration_source_id"),
+        key="MANIFEST.json default_configuration_source_id",
     )
 
 
-def _manifest_primary_source(manifest: dict[str, Any]) -> dict[str, Any]:
-    primary_source_id = _manifest_primary_source_id(manifest)
+def _manifest_default_source(manifest: dict[str, Any]) -> dict[str, Any]:
+    default_source_id = _manifest_default_source_id(manifest)
     source_exports = _require_list(
         manifest.get("source_exports"),
         key="MANIFEST.json source_exports",
@@ -426,12 +426,12 @@ def _manifest_primary_source(manifest: dict[str, Any]) -> dict[str, Any]:
     matches = [
         _require_mapping(source, key="MANIFEST.json source_exports[]")
         for source in source_exports
-        if isinstance(source, dict) and source.get("source_id") == primary_source_id
+        if isinstance(source, dict) and source.get("source_id") == default_source_id
     ]
     if len(matches) != 1:
         raise ValueError(
             "MANIFEST.json must contain exactly one source_exports entry for "
-            f"primary_source_id={primary_source_id!r}."
+            f"default_configuration_source_id={default_source_id!r}."
         )
     return matches[0]
 
@@ -455,24 +455,24 @@ def _require_manifest_table(
     *,
     artifact_root: Path,
     manifest: dict[str, Any],
-    primary_source: dict[str, Any],
+    default_source: dict[str, Any],
     table_name: str,
 ) -> Path:
-    primary_source_id = _manifest_primary_source_id(manifest)
+    default_source_id = _manifest_default_source_id(manifest)
     source_tables = {
-        _require_string(table, key=f"{primary_source_id}.tables[]")
-        for table in _require_list(primary_source.get("tables"), key="source tables")
+        _require_string(table, key=f"{default_source_id}.tables[]")
+        for table in _require_list(default_source.get("tables"), key="source tables")
     }
     if table_name not in source_tables:
         raise ValueError(
-            f"Primary manifest source '{primary_source_id}' does not list "
-            f"{table_name!r}."
+            f"Manifest source '{default_source_id}' of the default configuration "
+            f"does not list {table_name!r}."
         )
-    relative_path = f"tables/{primary_source_id}/{table_name}"
+    relative_path = f"tables/{default_source_id}/{table_name}"
     record = _manifest_file_record(manifest, relative_path)
     table_path = artifact_root / relative_path
     if not table_path.is_file():
-        raise FileNotFoundError(f"Missing primary table: {table_path}")
+        raise FileNotFoundError(f"Missing table of the default configuration: {table_path}")
     expected_size = record.get("size_bytes")
     if expected_size != table_path.stat().st_size:
         raise ValueError(
@@ -494,13 +494,13 @@ def _require_manifest_table(
 
 def _load_primary_tables(artifact_root: Path) -> dict[str, pd.DataFrame]:
     manifest = _load_json_mapping(artifact_root / "MANIFEST.json")
-    primary_source = _manifest_primary_source(manifest)
+    default_source = _manifest_default_source(manifest)
     tables: dict[str, pd.DataFrame] = {}
     for table_name in PRIMARY_TABLES:
         table_path = _require_manifest_table(
             artifact_root=artifact_root,
             manifest=manifest,
-            primary_source=primary_source,
+            default_source=default_source,
             table_name=table_name,
         )
         tables[table_name] = pd.read_csv(table_path)

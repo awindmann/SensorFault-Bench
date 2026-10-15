@@ -27,6 +27,7 @@ from utils.env import set_mlflow_storage_env
 from utils.parsing import (
     parse_optional_unit_float,
     parse_perturbation_channel_fraction_max,
+    parse_perturbation_severity_distribution,
     require_namespace_bool,
     require_namespace_value,
     resolve_dataset_window_args,
@@ -68,6 +69,10 @@ def prepare_testing_entrypoint_args(
     extracted_defaults = extract_recipe_defaults_for_scope(recipe_specs)
     defaults = merge_recipe_defaults_for_scope(defaults, extracted_defaults)
     parser = build_parser(defaults)
+    parser.description = (
+        "Select the trained models on clean validation data and evaluate them on "
+        "clean and faulty test windows."
+    )
     args = parser.parse_args(list(explicit_cli_args))
 
     recipe_param_defaults: dict[str, Any] = {}
@@ -88,6 +93,10 @@ def prepare_testing_entrypoint_args(
     )
     _normalize_orchestration_booleans(args)
     _normalize_fixed_channel_fraction(args)
+    args.perturbation_severity_distribution = parse_perturbation_severity_distribution(
+        require_namespace_value(args, key="perturbation_severity_distribution"),
+        key="perturbation_severity_distribution",
+    )
     configured_methods = tuple(str(spec.pipeline_method).strip() for spec in recipe_specs)
     requested_methods = resolve_requested_methods(
         args,

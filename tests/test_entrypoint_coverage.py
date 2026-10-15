@@ -71,6 +71,39 @@ def test_run_training_requires_runner_coverage_report(monkeypatch):
     assert runner.calls == 1
 
 
+def test_run_training_trains_baseline_before_dependent_methods(
+    monkeypatch,
+    registered_methods_defaults,
+):
+    runner = _RunnerStub(reports=[object()] * 3)
+    _patch_run_training_side_effects(monkeypatch, runner=runner)
+    started_methods = []
+
+    def _create_runner(spec, _args):
+        started_methods.append(spec.pipeline_method)
+        return runner
+
+    monkeypatch.setattr(run_training, "create_pipeline_runner", _create_runner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_training.py",
+            "--data-files",
+            "ETTh1",
+            "--model",
+            "GRU",
+            "--method",
+            "ensemble",
+            "randomized_training",
+            "baseline",
+        ],
+    )
+
+    run_training.main()
+
+    assert started_methods == ["baseline", "randomized_training", "ensemble"]
+
+
 def test_run_training_rejects_scope_resolver_that_drops_requested_method(monkeypatch):
     monkeypatch.setattr(
         run_training,

@@ -1,9 +1,8 @@
-# Reproducing The Benchmark
+# Reproducing the Benchmark
 
-This guide documents the repository workflow for the benchmark scope. The
-workflow uses the tracked source tree, the dataset keys in
-`configs/defaults.yaml`, and the benchmark-scope display metadata in
-`configs/benchmark_scope.yaml`.
+This guide describes how to run the full benchmark and where its outputs go.
+The workflow reads the dataset keys from `configs/defaults.yaml` and the display
+labels of the benchmark scope from `configs/benchmark_scope.yaml`.
 
 ## Setup
 
@@ -12,14 +11,13 @@ uv sync
 ```
 
 Place the four benchmark datasets under `DATA_ROOT`, which defaults to
-`data/processed`. See `data/README.md` for acquisition, preprocessing, and
-derived-dataset validation.
+`data/processed`. [`data/README.md`](../data/README.md) describes how to
+acquire, preprocess, and validate them.
 
 ## Source Validation
 
-The source repository includes a pytest suite under `tests/`. It validates the
-benchmark code, release surface, paper-artifact manifest, and public-safe
-documentation:
+The pytest suite under `tests/` checks the benchmark code and the worked
+examples of the guides:
 
 ```bash
 uv run pytest -q
@@ -27,94 +25,50 @@ uv run pytest -q
 
 ## Full Benchmark Commands
 
-Train all benchmark datasets, architectures, and applicable methods:
+Train every dataset, architecture, and applicable method of the benchmark:
 
 ```bash
 uv run python run_training.py
 ```
 
-The commands above use the configured benchmark defaults. Dataset-specific
-benchmark batch sizes are owned by `configs/dataset_windows.yaml`: batch size
-64 for `BeijingAir_Tiantan` and `Penmanshiel_Hourly_WT08`, and batch size 16 for
-`ETTh1` and `traffic`.
+This command uses the benchmark defaults. The batch size of each dataset comes
+from `configs/dataset_windows.yaml`, which sets 64 for `BeijingAir_Tiantan` and
+`Penmanshiel_Hourly_WT08` and 16 for `ETTh1` and `traffic`.
 
-Evaluate current winners under the canonical perturbation protocol:
+Evaluate the selected models under the scored scenarios:
 
 ```bash
 uv run python run_testing.py --full-coverage
 ```
 
-Build cross-dataset analysis artifacts from tested winners:
+Build the tables and figures across datasets from the tested models:
 
 ```bash
 uv run python run_analysis.py --full-coverage
 ```
 
-Coverage is partial by default for testing and analysis. Pass
-`--full-coverage` when you want strict benchmark coverage checks so missing
-benchmark coverage raises.
+By default, testing and analysis accept partial coverage. With
+`--full-coverage`, they raise an error when a run of the benchmark scope is
+missing.
 
-For partial local smoke checks, narrow the scope explicitly:
+For a first run on a small scope, use the smoke benchmark of the README
+[quick start](../README.md#quick-start). It trains one DLinear baseline on
+ETTh1 for one epoch and evaluates it under two scenarios.
 
-```bash
-uv run python run_training.py \
-  --data-files ETTh1 \
-  --model DLinear \
-  --method baseline \
-  --max-epochs 1 \
-  --max-hp-trials-per-model 1 \
-  --n-train-samples 8 \
-  --n-val-samples 4 \
-  --n-test-samples 4 \
-  --input-len 12 \
-  --target-len 3 \
-  --batch-size 4 \
-  --num-workers 0 \
-  --accelerator cpu \
-  --devices 1 \
-  --mlflow-experiment-prefix benchmark-smoke \
-  --logdir runs/smoke \
-  --rerun
-uv run python run_testing.py \
-  --data-files ETTh1 \
-  --model DLinear \
-  --method baseline \
-  --max-hp-trials-per-model 1 \
-  --n-train-samples 8 \
-  --n-val-samples 4 \
-  --n-test-samples 4 \
-  --input-len 12 \
-  --target-len 3 \
-  --batch-size 4 \
-  --num-workers 0 \
-  --accelerator cpu \
-  --devices 1 \
-  --perturbation-scenarios missing_data noise \
-  --bootstrap-ci-resamples 10 \
-  --mlflow-experiment-prefix benchmark-smoke \
-  --logdir runs/smoke \
-  --rerun
-uv run python run_analysis.py \
-  --data-files ETTh1 \
-  --model DLinear \
-  --method baseline \
-  --max-hp-trials-per-model 1 \
-  --n-train-samples 8 \
-  --n-val-samples 4 \
-  --n-test-samples 4 \
-  --input-len 12 \
-  --target-len 3 \
-  --batch-size 4 \
-  --perturbation-scenarios missing_data noise \
-  --bootstrap-ci-resamples 10 \
-  --mlflow-experiment-prefix benchmark-smoke \
-  --logdir runs/smoke
-```
+## Command-Line Options
+
+`uv run python run_training.py --help` lists every option with its purpose and
+default, grouped by topic and with one group per method recipe.
+`run_testing.py` and `run_analysis.py` accept the same options.
+The help text lives in `configs/cli_help.yaml`, while the defaults live in
+`configs/defaults.yaml` and in the recipes under `configs/pipelines/`. A recipe
+option given on the command line fixes that parameter instead of searching its
+grid.
 
 ## Method Execution Order
 
-`python run_training.py` expands methods in the `BENCHMARK_METHODS` order from
-`configs/defaults.yaml`:
+`BENCHMARK_METHODS` in `configs/defaults.yaml` lists the methods that
+`python run_training.py` runs without `--method`:
 
 1. `baseline`
 2. `randomized_training`
@@ -125,10 +79,14 @@ uv run python run_analysis.py \
 7. `fault_augmentation`
 8. `revin`
 
-The full-scope runner applies the benchmark method-architecture applicability
-matrix from `configs/benchmark_scope.yaml`. Baseline covers all benchmark
-architectures. Non-baseline methods cover the method-comparison architectures,
-with `revin` excluding `PatchTST`.
+Training runs `baseline` first, because the other methods build on its runs,
+and the wrapping methods `ensemble` and `randomized_smoothing` last, because
+they wrap fitted models. The remaining methods run in the listed order.
+
+At full scope, training applies each method only to the architectures that
+`configs/benchmark_scope.yaml` lists for it. The baseline covers all seven
+architectures, whereas the robustness-improvement methods cover the five
+method-comparison architectures, with `revin` excluding `PatchTST`.
 
 ## Runtime Profiles
 
@@ -147,18 +105,19 @@ uv run python run_training.py \
   --minio-endpoint <object-store-endpoint>
 ```
 
-The local profile uses the empty `MINIO_ENDPOINT` default from
-`configs/defaults.yaml`. Credentials must come from the shell, environment, or
-VM secret manager. For MinIO, pass `--minio-endpoint` explicitly. Standard
-S3-compatible deployments that rely on provider defaults can leave it empty.
+The local profile keeps the empty default of `MINIO_ENDPOINT` in
+`configs/defaults.yaml`. A MinIO store needs `--minio-endpoint`, whereas S3
+stores that rely on provider defaults can leave it empty. Credentials come from
+the shell, the environment, or a secret manager of the VM, never from committed
+YAML. Changing `DATA_ROOT`, `LOGDIR`, `MINIO_ENDPOINT`, or credentials does not
+change the data configuration signature or the run identity.
 
 ## Artifacts
 
-Training and testing log MLflow runs under the configured `LOGDIR`. The default
-local store is `runs`.
-
-`run_testing.py` writes degradation artifacts on tested winner runs, including
-clean samples, scenario samples, and scenario summaries.
+Training and testing log MLflow runs under `LOGDIR`, which defaults to the
+local store `runs`. `run_testing.py` attaches the degradation results to each
+tested run, including the clean samples, scenario samples, and scenario
+summaries.
 
 `run_analysis.py` creates a meta-analysis MLflow run with:
 
@@ -171,100 +130,127 @@ clean samples, scenario samples, and scenario summaries.
 - `tables/scenario_samples.csv`
 - `tables/testing_coverage.csv`
 - `tables/figures_manifest.csv`
-- `tables/forecast_extremes.csv` when forecast-extreme rendering is enabled
-  and renderable extreme samples are available
+- `tables/forecast_extremes.csv` when the rendering of extreme forecasts is
+  enabled and extreme samples can be rendered
 - `figures/...`
 - `config/meta_analysis_args.yaml`
 
 Exact figure filenames are recorded in `tables/figures_manifest.csv`.
 
+## Results Schema
+
+`tables/full_results.csv` has one row per tested model. The key columns are:
+
+| Column | Meaning |
+| --- | --- |
+| `dataset`, `model_architecture` | Dataset and architecture keys |
+| `robustness_method`, `pipeline_id` | `baseline` or the method key, and the selected recipe variant |
+| `run_id` | MLflow run of the selected model |
+| `data_config_signature` | Hash of the data configuration that determines the splits |
+| `eval_data_seed` | Seed of the sampled test windows and the fault randomness |
+| `MSE_test` | Clean MSE |
+| `D_w`, `D_w_CI_lo`, `D_w_CI_hi` | Worst-scenario degradation and its 95% bootstrap interval |
+| `MSE_w` | Worst-scenario fault-time MSE. `err_pert_ws` holds the same value, with its interval in `err_pert_ws_CI_lo` and `err_pert_ws_CI_hi` |
+| `worst_scenario` | Key of the scenario with the largest degradation |
+| `D_mean`, `err_pert_mean` | Means of scenario degradation and scenario MSE over the scored scenarios, reported as diagnostics |
+| `n_test_samples` | Number of sampled test windows |
+| `robustness_scoring_semantics` | Severity sampling distribution of the evaluation, for example `uniform_severity_degradation` |
+
+`tables/improvement_deltas_selected.csv` has one row per selected
+robustness-improved variant and architecture. The key columns are:
+
+| Column | Meaning |
+| --- | --- |
+| `dataset`, `model_architecture`, `robustness_method`, `pipeline_id` | Identity of the robustness-improved variant |
+| `run_id`, `matched_baseline_run_id` | Runs of the robustness-improved variant and its paired baseline forecasting model |
+| `MSE_test_improved`, `D_w_improved`, `MSE_w_improved` | Quantities of the robustness-improved variant |
+| `MSE_test_baseline`, `D_w_baseline`, `MSE_w_baseline` | Quantities of the paired baseline forecasting model |
+| `delta_MSE_test`, `delta_D_w`, `delta_MSE_w` | Paired deltas, method minus baseline. Negative values indicate improvement |
+| `pct_change_MSE_test`, `pct_change_D_w`, `pct_change_MSE_w` | Paired deltas in percent of the baseline value |
+
+`tables/pipeline_method_delta_results.csv` averages the paired deltas of each
+method over architectures per dataset, with bootstrap intervals over the
+architecture pairs.
+
 ## Paper Artifact
 
-The submitted paper evidence bundle is committed under `paper_artifact/`. Its
-`MANIFEST.json` names the frozen source exports, records the source repository
-commit observed at build time, lists the copied table files, and stores SHA-256
-checksums and byte sizes for each bundled file. The paired
-`config/eval_context.json` is generated from allowlisted analysis fields, not
-from the raw `config/meta_analysis_args.yaml` files.
+The result bundle of the NeurIPS 2026 paper is committed under
+`paper_artifact/`. Its guide,
+[`paper_artifact/README.md`](../paper_artifact/README.md), maps each section of
+the paper to its bundled results, the commands that reproduce them, and the
+compute accounting of its experiments. `MANIFEST.json` stores the SHA-256
+checksum and byte size of each bundled file.
 
-The core paper artifact is a provenance and table bundle. It includes curated
-forecast-example sample identities under `forecast_examples/manifest.json`, but
-it does not redistribute checkpoints, raw datasets, processed runtime datasets,
-MLflow run stores, broad sample-level dumps, raw private configs, generic
-generated figure binaries, full forecast trace CSV dumps outside the curated R
-figure extracts, or replay PDFs.
+The optional folder `paper_artifact/R/` contains the R and TikZ scripts of the
+paper figures, their curated inputs, and the rendered PDFs. Its R and TeX
+dependencies, which `uv sync` does not install, are documented in
+`paper_artifact/R/README.md`.
 
-The optional `paper_artifact/R/` subartifact is narrower: it contains the R and
-TikZ scripts, curated figure-level inputs, and polished PDFs for the submitted
-paper figures. These R and TeX dependencies are documented in
-`paper_artifact/R/README.md` and are not installed by `uv sync`.
+[`forecast_plot_replay.md`](forecast_plot_replay.md) regenerates the forecast
+plots of single test windows from tested runs or from exported traces.
 
-## Forecast Plot Replay
+## Troubleshooting
 
-Use `scripts/render_forecast_plots.py from-runs` to regenerate selected
-forecast plots from tested MLflow runs and trained benchmark models. This mode
-queries the selected run, loads the matching checkpoint and dataset, rebuilds
-the requested clean and perturbed samples, and writes fresh per-sample forecast
-trace CSVs by default. It does not require trace CSVs as input.
+**Accelerator selection.** `--accelerator` defaults to `auto`, which lets
+PyTorch Lightning pick an available accelerator. Pass `--accelerator cpu` to
+force CPU execution, or `--accelerator gpu --devices 1` to require a GPU. The
+benchmark trains on one device.
 
-For already curated baseline-winner samples, pass the compact sample identity
-directly. The format is
-`ARCH:SCENARIO:PERT_IDX:SAMPLE_ID:SOURCE_IDX:SEVERITY[:SAMPLE_SCORE]`:
+**DataLoader shared-memory errors.** Data loading uses 12 worker processes by
+default. If workers fail with shared-memory or open-file errors, pass
+`--num-workers 0` or a smaller worker count. Inside a container, a larger
+shared-memory size also helps.
 
-```bash
-uv run python scripts/render_forecast_plots.py from-runs \
-  --tracking-uri <mlflow-tracking-uri> \
-  --minio-endpoint <object-store-endpoint> \
-  --experiment-prefix improv-11 \
-  --data-root <processed-data-root> \
-  --dataset BeijingAir_Tiantan \
-  --batch-size 64 \
-  --n-test-samples 10000 \
-  --eval-data-seed 1806770612 \
-  --output-dir forecast_plots_final_traces/beijing_air \
-  --sample PatchTST:drift:0:2329:572:0.596497 \
-  --sample DLinear:spike:3:8609:3644:0.492074 \
-  --export-traces
-```
+**Memory pressure.** Testing downloads each selected checkpoint into a
+temporary directory and deletes the file after loading it. If the system
+temporary directory is memory-backed, point `TMPDIR` to a directory on disk.
+A smaller `--batch-size` lowers accelerator memory use. The benchmark batch
+sizes come from `configs/dataset_windows.yaml`.
 
-`--export-traces` is enabled by default. Pass `--no-export-traces` only when
-the portable replay artifacts are not needed. The public repository defaults
-target local smoke runs, so plots from the frozen benchmark run store need the
-matching `--tracking-uri`, `--minio-endpoint`, `--experiment-prefix`, and
-`--data-root` values. Use `--samples-csv` instead of compact `--sample` when a
-selected row must carry `run_id`, `robustness_method`, `pipeline_method`, or
-per-row runtime overrides.
-
-To select samples from analysis artifacts, pass either
-`tables/scenario_samples.csv` or `tables/forecast_extremes.csv`:
+**MLflow store location.** `--logdir` selects the tracking store. A local path,
+such as the default `runs`, becomes a file store, whereas an `http://` or
+`https://` URI targets a tracking server. Runs are grouped into experiments
+named `<experiment-prefix>-<dataset>`, where the prefix comes from
+`--mlflow-experiment-prefix`. Training, testing, and analysis must use the same
+`--logdir` and prefix, or testing reports that it found no experiment with that
+prefix. Browse a local store with:
 
 ```bash
-uv run python scripts/render_forecast_plots.py from-runs \
-  --dataset ETTh1 \
-  --model DLinear \
-  --method baseline \
-  --scenario-samples-csv <analysis-artifacts>/tables/scenario_samples.csv \
-  --output-dir forecast_plots
+uv run mlflow ui --backend-store-uri runs
 ```
 
-Use `--forecast-extremes-csv` with `--extreme-kind`, `--extreme-rank`,
-`--sample-id`, `--pert-idx`, or `--limit` when only a filtered subset of the
-extreme-sample table should be rendered.
-
-Use `scripts/render_forecast_plots.py from-traces` only to replay trace CSVs
-that were already exported by `from-runs` or by an earlier plotting run. This
-path renders without MLflow, checkpoints, or dataset files:
+**Chronos-2 weights.** The first Chronos-2 run downloads `amazon/chronos-2` at
+the revision pinned in `configs/baseline_hparams.yaml` from the Hugging Face
+Hub into the Hugging Face cache, which `HF_HOME` relocates. For machines
+without network access, fill the cache once on a connected machine, copy it,
+and set `HF_HUB_OFFLINE=1`:
 
 ```bash
-uv run python scripts/render_forecast_plots.py from-traces \
-  --trace-root paper_artifact/R/data/forecast_plots_final_traces \
-  --output-dir forecast_plot_replay \
-  --format html \
-  --preserve-layout \
-  --missing-robustness-method baseline
+uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('amazon/chronos-2', revision='0f8a440441931157957e2be1a9bce66627d99c76')"
 ```
 
-Trace CSVs produced by current tooling contain the `robustness_method` column.
-Older trace CSVs, including the bundled curated R figure extracts, must pass the
-method label explicitly with `--missing-robustness-method`. Otherwise rendering
-raises instead of guessing the method.
+A failed download raises `Failed to load Chronos2Pipeline`.
+
+**Reruns.** Training skips a configuration when its experiment already holds
+a finished run with the same run signature, so an interrupted campaign resumes
+where it stopped. `--rerun` deletes the existing runs of each requested
+signature and trains them again. Testing likewise skips selected models that are
+already fully tested in the current evaluation context, which `--rerun`
+evaluates again. Runs that are still active with the same signature raise an
+error.
+
+**Coverage errors.** With `--full-coverage`, testing raises
+`Testing expected-vs-seen coverage mismatch detected` and lists the missing
+architecture, method, or variant runs. Train the missing runs, or narrow the
+scope with `--data-files`, `--model`, and `--method`. Without
+`--full-coverage`, testing and analysis drop incomplete method families and
+print what they dropped. Analysis also raises under `--full-coverage` when the
+configured scenarios lie outside `configs/reporting/core_figures.yaml`, as
+described in [`sensitivity_analyses.md`](sensitivity_analyses.md).
+
+**Dataset validation failures.** `scripts/benchmark_dataset_contracts.py` and
+the preprocessing scripts compare a staged file with the registry metadata,
+including the filename, row count, channel count, column order, and timestamp
+interval. A mismatch usually means a different upstream version or a wrong
+source file. Download the source again as described in
+[`data/README.md`](../data/README.md) and repeat the validation.

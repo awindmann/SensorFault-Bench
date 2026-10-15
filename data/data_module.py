@@ -13,7 +13,11 @@ from data.dataset import (
     TrainPerturbedDataset,
     BatchSegment,
 )
-from data.samplers import PerturbationSeveritySampler
+from data.samplers import (
+    BoundedUniformSeverity,
+    PerturbationSeveritySampler,
+    resolve_severity_distribution,
+)
 from data.perturbations import (
     PERTURBATION_REGISTRY,
     require_perturbation_channel_scope,
@@ -23,6 +27,8 @@ from utils.parsing import (
     build_perturbation_scenarios_signature,
     parse_perturbation_channel_fraction_max,
     parse_perturbation_scenarios,
+    parse_perturbation_severity_distribution,
+    parse_required_nonnegative_float,
     parse_train_fault_profiles,
     parse_train_perturbation_probability,
     parse_train_perturbation_severity_max,
@@ -33,12 +39,10 @@ from utils.parsing import (
 def validate_train_noise_config(train_noise_std, train_noise_channels) -> None:
     if train_noise_std is None:
         return
-    try:
-        noise_std = float(train_noise_std)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"train_noise_std must be numeric; got '{train_noise_std}'."
-        ) from exc
+    noise_std = parse_required_nonnegative_float(
+        train_noise_std,
+        key="train_noise_std",
+    )
     if noise_std > 0:
         if train_noise_channels is None or str(train_noise_channels).strip() == "":
             raise ValueError(
@@ -97,12 +101,18 @@ def _require_registered_perturbation_class(
         )
 
 
-def _instantiate_perturbations(
+def instantiate_perturbations(
     perturbation_classes: Sequence[type],
     *,
     registry: Mapping[str, Any],
     channel_fraction_max: float,
 ) -> list[Any]:
+    """Build the operators of registered fault classes as the benchmark builds them.
+
+    Operators scoped to continuous or discrete channels receive
+    ``channel_fraction_max`` as their channel cap. Operators that act on all
+    channels take no cap.
+    """
     perturbations: list[Any] = []
     for pert_class in perturbation_classes:
         _require_registered_perturbation_class(pert_class, registry=registry)
@@ -144,29 +154,13 @@ def _build_probability_vector(
         ) from exc
 
 
-def _make_bounded_uniform_sampler(bound: float):
-    """Return a severity law that samples uniformly in [0, bound]."""
-    def _sample(rng: torch.Generator) -> float:
-        return float(torch.rand((), generator=rng).item() * bound)
-    return _sample
-
-
-def _build_train_severity_laws(
-    perturbation_names: Sequence[str],
-    *,
-    severity_max: float,
-) -> dict[str, Any]:
-    native_sampler = _make_bounded_uniform_sampler(severity_max)
-    return {name: native_sampler for name in perturbation_names}
-
-
 def _build_perturbation_sampler(
     *,
     scenario_names: Sequence[str],
     registry: Mapping[str, Any],
     channel_fraction_max: float,
     p_perturbations: Any,
-    severity_laws: Optional[Mapping[str, Any]],
+    severity_distribution: Any,
     key: str,
 ) -> tuple[PerturbationSeveritySampler, list[str], dict[int, str]]:
     perturbation_classes = _resolve_perturbation_classes(
@@ -174,7 +168,7 @@ def _build_perturbation_sampler(
         registry=registry,
         key=key,
     )
-    perturbations = _instantiate_perturbations(
+    perturbations = instantiate_perturbations(
         perturbation_classes,
         registry=registry,
         channel_fraction_max=channel_fraction_max,
@@ -186,7 +180,7 @@ def _build_perturbation_sampler(
     sampler = PerturbationSeveritySampler(
         perturbations,
         probs,
-        severity_laws,
+        severity_distribution,
     )
     for local_idx, perturbation in enumerate(perturbations):
         perturbation.idx = int(local_idx)
@@ -246,8 +240,8 @@ class TSDataModule(pl.LightningDataModule):
         n_test_samples: Number of test samples (None = sequential).
         perturbation_channel_fraction_max: Maximum fraction of eligible sensors affected at severity 1.0.
         perturbation_scenarios: Ordered perturbation scenario names to sample from.
+        perturbation_severity_distribution: Evaluation severity distribution identifier.
         p_perturbations: Perturbation probability mode.
-        severity_laws: Severity distribution overrides.
         shuffle_batches_before_split: Whether to shuffle batches before splitting.
         batch_size: Batch size.
         num_workers: Number of dataloader workers.
@@ -281,8 +275,8 @@ class TSDataModule(pl.LightningDataModule):
         n_test_samples=None,
         perturbation_channel_fraction_max=None,
         perturbation_scenarios=None,
+        perturbation_severity_distribution=None,
         p_perturbations="uniform",
-        severity_laws=None,
         shuffle_batches_before_split=False,
         batch_size=64,
         num_workers=None,
@@ -376,15 +370,10 @@ class TSDataModule(pl.LightningDataModule):
         self.strict_iid = strict_iid
         if train_noise_std is None:
             train_noise_std = 0.0
-        try:
-            train_noise_std = float(train_noise_std)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"train_noise_std must be numeric; got '{train_noise_std}'."
-            ) from exc
-        if train_noise_std < 0:
-            raise ValueError("train_noise_std must be >= 0.")
-        self.train_noise_std = train_noise_std
+        self.train_noise_std = parse_required_nonnegative_float(
+            train_noise_std,
+            key="train_noise_std",
+        )
         self.train_noise_channels = train_noise_channels
         self.train_noise_generator = train_noise_generator
 
@@ -407,6 +396,14 @@ class TSDataModule(pl.LightningDataModule):
         self.perturbation_scenarios_signature = build_perturbation_scenarios_signature(
             self.perturbation_scenarios
         )
+        self.perturbation_severity_distribution = parse_perturbation_severity_distribution(
+            perturbation_severity_distribution,
+            key="perturbation_severity_distribution",
+        )
+        self.evaluation_severity_distribution = resolve_severity_distribution(
+            self.perturbation_severity_distribution,
+            key="perturbation_severity_distribution",
+        )
         self.shuffle_batches_before_split = shuffle_batches_before_split
 
         (
@@ -418,7 +415,7 @@ class TSDataModule(pl.LightningDataModule):
             registry=PERTURBATION_REGISTRY,
             channel_fraction_max=self.perturbation_channel_fraction_max,
             p_perturbations=p_perturbations,
-            severity_laws=severity_laws,
+            severity_distribution=self.evaluation_severity_distribution,
             key="perturbation_scenarios",
         )
         if tuple(self.perturbation_names) != tuple(self.perturbation_scenarios):
@@ -507,9 +504,8 @@ class TSDataModule(pl.LightningDataModule):
                 registry=PERTURBATION_REGISTRY,
                 channel_fraction_max=self.train_perturbation_channel_fraction_max,
                 p_perturbations="uniform",
-                severity_laws=_build_train_severity_laws(
-                    self.train_perturbation_scenarios,
-                    severity_max=self.train_perturbation_severity_max,
+                severity_distribution=BoundedUniformSeverity(
+                    self.train_perturbation_severity_max
                 ),
                 key="train_perturbation_scenarios",
             )
@@ -1111,7 +1107,17 @@ class TSDataModule(pl.LightningDataModule):
         return self._make_loader(self.ds_train, shuffle=True)
 
     def val_dataloader(self):
-        return self._make_loader(self.ds_val, shuffle=False)
+        # Validation scores full batches only. The results of the default
+        # configuration were selected this way.
+        n_val_windows = len(self.ds_val)
+        if n_val_windows < self.batch_size:
+            raise ValueError(
+                f"The validation split has {n_val_windows} windows, fewer than "
+                f"batch_size={self.batch_size}. Validation scores full batches "
+                "only, so no validation loss can be computed. Increase "
+                "N_VAL_SAMPLES or the validation split, or reduce BATCH_SIZE."
+            )
+        return self._make_loader(self.ds_val, shuffle=False, drop_last=True)
 
     def test_dataloader(self):
         return self._make_loader(self.ds_test, shuffle=False, drop_last=False)

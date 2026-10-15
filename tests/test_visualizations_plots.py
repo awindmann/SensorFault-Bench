@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from config_loader import load_parsed_core_figure_registry
 from scripts.render_forecast_plots import (
-    load_forecast_trace_figure,
     load_forecast_trace_record,
     render_traces,
 )
@@ -131,6 +131,14 @@ def _trajectory_subplot_frames(
         ("Penmanshiel_Hourly_WT08", "Penmanshiel"),
         ("ETTh1", "ETTh1"),
         ("traffic", "traffic"),
+        ("dataset_4", "Dataset 4"),
+        ("dataset_5", "Dataset 5"),
+        ("dataset_6", "Dataset 6"),
+        ("dataset_7", "Dataset 7"),
+        ("dataset_8", "Dataset 8"),
+        ("dataset_9", "Dataset 9"),
+        ("dataset_10", "Dataset 10"),
+        ("dataset_11", "Dataset 11"),
     ]
     selected_panels = panel_spec[:dataset_count]
     baseline_rows: list[dict[str, object]] = []
@@ -430,7 +438,7 @@ def test_plot_ranked_performance_robustness_pareto_rejects_missing_group_values(
         )
 
 
-def test_plot_pareto_dataset_panels_creates_2x2_with_shared_legend():
+def test_plot_pareto_dataset_panels_creates_2x2_with_in_panel_pareto_key():
     datasets = ["BeijingAir", "Penmanshiel", "ETTh1", "traffic"]
     frames = []
     for ds in datasets:
@@ -472,18 +480,32 @@ def test_plot_pareto_dataset_panels_creates_2x2_with_shared_legend():
     annotation_texts = {str(a.text) for a in fig.layout.annotations}
     for ds in datasets:
         assert ds in annotation_texts, f"Missing panel title for {ds}"
+    first_panel_title = next(a for a in fig.layout.annotations if str(a.text) == datasets[0])
+    assert first_panel_title.font.size == 12
+    assert "Pareto frontier" in annotation_texts
     legend_names = {
         str(t.name) for t in fig.data if bool(getattr(t, "showlegend", False))
     }
-    assert legend_names == {"Pareto frontier"}
+    assert legend_names == set()
+    pareto_key_shapes = [
+        shape
+        for shape in fig.layout.shapes
+        if str(shape.xref).endswith(" domain") and str(shape.yref).endswith(" domain")
+    ]
+    assert len(pareto_key_shapes) == 1
+    assert pareto_key_shapes[0].xref == "x2 domain"
+    assert pareto_key_shapes[0].yref == "y2 domain"
     marker_trace_names = {
         str(t.name) for t in fig.data if str(getattr(t, "mode", "")) == "markers+text"
     }
     assert marker_trace_names == {"Attention", "Recurrent"}
     for axis in fig.select_xaxes():
         assert float(axis.range[0]) < float(axis.range[1])
-    assert fig.layout.width == 1100
-    assert fig.layout.height == 380
+    assert fig.layout.width == 550
+    assert fig.layout.height == 550
+    assert fig.layout.font.size == 12
+    assert fig.layout.yaxis.title.font.size == 12
+    assert fig.layout.xaxis.tickfont.size == 11
 
 
 def test_plot_pareto_dataset_panels_accepts_single_panel():
@@ -510,7 +532,66 @@ def test_plot_pareto_dataset_panels_accepts_single_panel():
     assert fig.layout.height == 380
 
 
-def test_plot_pareto_dataset_panels_rejects_more_than_four_panels():
+@pytest.mark.parametrize(
+    (
+        "dataset_count",
+        "expected_axis_count",
+        "expected_width",
+        "expected_height",
+        "expected_hidden_axes",
+    ),
+    [
+        (5, 6, 960, 720, 1),
+        (6, 6, 960, 720, 0),
+        (8, 9, 960, 1080, 1),
+        (12, 12, 960, 1440, 0),
+    ],
+)
+def test_plot_pareto_dataset_panels_grows_canvas_for_more_than_four_panels(
+    dataset_count: int,
+    expected_axis_count: int,
+    expected_width: int,
+    expected_height: int,
+    expected_hidden_axes: int,
+):
+    frames = [
+        (
+            f"dataset_{idx}",
+            pd.DataFrame(
+                [{"model": "X", "MSE_test": 0.3 + 0.01 * idx, "R_worst_scenario": 0.8}]
+            ),
+        )
+        for idx in range(dataset_count)
+    ]
+
+    fig = plot_pareto_dataset_panels(
+        frames,
+        perf_col="MSE_test",
+        robust_col="R_worst_scenario",
+        x_semantics=_perf_semantics("MSE (Test)"),
+        y_semantics=_score_semantics("Worst-Scenario Robustness"),
+    )
+
+    assert fig.layout.width == expected_width
+    assert fig.layout.height == expected_height
+    assert len(list(fig.select_xaxes())) == expected_axis_count
+    assert fig.layout.font.size == 12
+    if dataset_count >= 5:
+        row_gap = float(fig.layout.yaxis.domain[0]) - float(fig.layout.yaxis4.domain[1])
+        assert row_gap == pytest.approx(0.08)
+    assert len(
+        [axis for axis in fig.select_xaxes() if axis.visible is False]
+    ) == expected_hidden_axes
+    assert len(
+        [axis for axis in fig.select_yaxes() if axis.visible is False]
+    ) == expected_hidden_axes
+
+
+def _titled_x_axis_names(fig) -> list[str]:
+    return sorted(axis.plotly_name for axis in fig.select_xaxes() if axis.title.text)
+
+
+def test_plot_pareto_dataset_panels_titles_lowest_x_axis_of_each_column():
     frames = [
         (
             f"dataset_{idx}",
@@ -521,7 +602,30 @@ def test_plot_pareto_dataset_panels_rejects_more_than_four_panels():
         for idx in range(5)
     ]
 
-    with pytest.raises(ValueError, match="between 1 and 4 panels"):
+    fig = plot_pareto_dataset_panels(
+        frames,
+        perf_col="MSE_test",
+        robust_col="R_worst_scenario",
+        x_semantics=_perf_semantics("MSE (Test)"),
+        y_semantics=_score_semantics("Worst-Scenario Robustness"),
+    )
+
+    # Five panels fill a 2x3 grid. The third column ends in the first row.
+    assert _titled_x_axis_names(fig) == ["xaxis3", "xaxis4", "xaxis5"]
+
+
+def test_plot_pareto_dataset_panels_rejects_more_than_twelve_panels():
+    frames = [
+        (
+            f"dataset_{idx}",
+            pd.DataFrame(
+                [{"model": "X", "MSE_test": 0.3 + 0.01 * idx, "R_worst_scenario": 0.8}]
+            ),
+        )
+        for idx in range(13)
+    ]
+
+    with pytest.raises(ValueError, match="between 1 and 12 panels"):
         plot_pareto_dataset_panels(
             frames,
             perf_col="MSE_test",
@@ -1110,17 +1214,61 @@ def test_plot_improvement_trajectory_subplots_use_ordered_titles_and_shared_lege
 
 
 @pytest.mark.parametrize(
-    ("dataset_count", "expected_axis_count", "expected_height", "expected_titles"),
+    (
+        "dataset_count",
+        "expected_axis_count",
+        "expected_width",
+        "expected_height",
+        "expected_titles",
+    ),
     [
-        (1, 1, 380, ["BeijingAir"]),
-        (2, 2, 320, ["BeijingAir", "Penmanshiel"]),
-        (3, 4, 550, ["BeijingAir", "Penmanshiel", "ETTh1"]),
-        (4, 4, 550, ["BeijingAir", "Penmanshiel", "ETTh1", "traffic"]),
+        (1, 1, 550, 380, ["BeijingAir"]),
+        (2, 2, 550, 320, ["BeijingAir", "Penmanshiel"]),
+        (3, 3, 825, 380, ["BeijingAir", "Penmanshiel", "ETTh1"]),
+        (4, 4, 550, 550, ["BeijingAir", "Penmanshiel", "ETTh1", "traffic"]),
+        (
+            5,
+            6,
+            960,
+            720,
+            ["BeijingAir", "Penmanshiel", "ETTh1", "traffic", "Dataset 4"],
+        ),
+        (
+            6,
+            6,
+            960,
+            720,
+            [
+                "BeijingAir",
+                "Penmanshiel",
+                "ETTh1",
+                "traffic",
+                "Dataset 4",
+                "Dataset 5",
+            ],
+        ),
+        (
+            8,
+            9,
+            960,
+            1080,
+            [
+                "BeijingAir",
+                "Penmanshiel",
+                "ETTh1",
+                "traffic",
+                "Dataset 4",
+                "Dataset 5",
+                "Dataset 6",
+                "Dataset 7",
+            ],
+        ),
     ],
 )
 def test_plot_improvement_trajectory_subplots_choose_expected_layout(
     dataset_count: int,
     expected_axis_count: int,
+    expected_width: int,
     expected_height: int,
     expected_titles: list[str],
 ):
@@ -1150,8 +1298,51 @@ def test_plot_improvement_trajectory_subplots_choose_expected_layout(
 
     assert len(list(fig.select_xaxes())) == expected_axis_count
     assert len(list(fig.select_yaxes())) == expected_axis_count
+    assert fig.layout.width == expected_width
     assert fig.layout.height == expected_height
     assert title_texts == expected_titles
+    expected_hidden_axes = {5: 1, 8: 1}.get(dataset_count, 0)
+    assert len(
+        [axis for axis in fig.select_xaxes() if axis.visible is False]
+    ) == expected_hidden_axes
+    assert len(
+        [axis for axis in fig.select_yaxes() if axis.visible is False]
+    ) == expected_hidden_axes
+
+
+def test_plot_improvement_trajectory_subplots_titles_lowest_x_axis_of_each_column():
+    backbone_df, improvement_df, panel_spec = _trajectory_subplot_frames(dataset_count=5)
+
+    fig = plot_improvement_trajectory_subplots(
+        backbone_df,
+        improvement_df,
+        panel_spec=panel_spec,
+        perf_col="MSE_test",
+        robust_col="D_w",
+        x_semantics=_perf_semantics("MSE (Test)"),
+        y_semantics=_lower_is_better_score_semantics("Worst-Scenario Degradation"),
+        method_col="backbone_architecture",
+        backbone_col="backbone_architecture",
+        baseline_backbone_col="model_architecture",
+        improvement_name_col="pipeline_id",
+    )
+
+    assert _titled_x_axis_names(fig) == ["xaxis3", "xaxis4", "xaxis5"]
+
+
+def test_plot_improvement_trajectory_subplots_rejects_more_than_twelve_panels():
+    panel_spec = [(f"dataset_{idx}", f"Dataset {idx}") for idx in range(13)]
+
+    with pytest.raises(ValueError, match="panel spec supports at most 12 datasets"):
+        plot_improvement_trajectory_subplots(
+            pd.DataFrame(),
+            pd.DataFrame(),
+            panel_spec=panel_spec,
+            perf_col="MSE_test",
+            robust_col="D_w",
+            x_semantics=_perf_semantics("MSE (Test)"),
+            y_semantics=_lower_is_better_score_semantics("Worst-Scenario Degradation"),
+        )
 
 
 def test_plot_perturbed_vs_clean_error_panels_render_four_panel_layout():
@@ -1194,8 +1385,8 @@ def test_plot_perturbed_vs_clean_error_panels_render_four_panel_layout():
 
     annotation_texts = {str(a.text) for a in fig.layout.annotations}
     assert annotation_texts.issuperset({"BeijingAir", "Penmanshiel", "ETTh1", "Traffic"})
-    assert fig.layout.width == 1100
-    assert fig.layout.height == 380
+    assert fig.layout.width == 550
+    assert fig.layout.height == 550
     assert not any(bool(getattr(trace, "showlegend", False)) for trace in fig.data)
     parity_traces = [trace for trace in fig.data if str(trace.name) == "Parity"]
     assert len(parity_traces) == 4
@@ -1214,6 +1405,131 @@ def test_plot_perturbed_vs_clean_error_panels_render_four_panel_layout():
         assert str(x_axis.scaleanchor) == f"y{axis_suffix}"
         assert float(x_axis.scaleratio) == pytest.approx(1.0)
         assert str(x_axis.constrain) == "domain"
+
+
+@pytest.mark.parametrize(
+    (
+        "dataset_count",
+        "expected_axis_count",
+        "expected_width",
+        "expected_height",
+        "expected_hidden_axes",
+    ),
+    [
+        (5, 6, 960, 720, 1),
+        (6, 6, 960, 720, 0),
+        (12, 12, 960, 1440, 0),
+    ],
+)
+def test_plot_perturbed_vs_clean_error_panels_grows_canvas_for_more_than_four_panels(
+    dataset_count: int,
+    expected_axis_count: int,
+    expected_width: int,
+    expected_height: int,
+    expected_hidden_axes: int,
+):
+    panel_frames = [
+        (
+            f"dataset_{idx}",
+            pd.DataFrame(
+                [
+                    {
+                        "model": "TSMixer",
+                        "MSE_test": 0.30 + 0.05 * idx,
+                        "MSE_w": 0.45 + 0.05 * idx,
+                    }
+                ]
+            ),
+        )
+        for idx in range(dataset_count)
+    ]
+
+    fig = plot_perturbed_vs_clean_error_panels(
+        panel_frames,
+        model_col="model",
+        clean_col="MSE_test",
+        pert_col="MSE_w",
+        x_semantics=_perf_semantics("MSE_c"),
+        y_semantics=_plot_semantics(
+            direction="minimize",
+            axis_family="numeric",
+            neutral_value=None,
+            display_label="MSE_w",
+        ),
+    )
+
+    assert fig.layout.width == expected_width
+    assert fig.layout.height == expected_height
+    assert len(list(fig.select_xaxes())) == expected_axis_count
+    assert len(
+        [axis for axis in fig.select_xaxes() if axis.visible is False]
+    ) == expected_hidden_axes
+    assert len(
+        [axis for axis in fig.select_yaxes() if axis.visible is False]
+    ) == expected_hidden_axes
+    parity_traces = [trace for trace in fig.data if str(trace.name) == "Parity"]
+    assert len(parity_traces) == dataset_count
+
+
+def test_plot_perturbed_vs_clean_error_panels_titles_lowest_x_axis_of_each_column():
+    panel_frames = [
+        (
+            f"dataset_{idx}",
+            pd.DataFrame(
+                [{"model": "TSMixer", "MSE_test": 0.30 + 0.05 * idx, "MSE_w": 0.45 + 0.05 * idx}]
+            ),
+        )
+        for idx in range(5)
+    ]
+
+    fig = plot_perturbed_vs_clean_error_panels(
+        panel_frames,
+        model_col="model",
+        clean_col="MSE_test",
+        pert_col="MSE_w",
+        x_semantics=_perf_semantics("MSE_c"),
+        y_semantics=_plot_semantics(
+            direction="minimize",
+            axis_family="numeric",
+            neutral_value=None,
+            display_label="MSE_w",
+        ),
+    )
+
+    assert _titled_x_axis_names(fig) == ["xaxis3", "xaxis4", "xaxis5"]
+
+
+def test_plot_perturbed_vs_clean_error_panels_rejects_more_than_twelve_panels():
+    panel_frames = [
+        (
+            f"dataset_{idx}",
+            pd.DataFrame(
+                [
+                    {
+                        "model": "TSMixer",
+                        "MSE_test": 0.30 + 0.05 * idx,
+                        "MSE_w": 0.45 + 0.05 * idx,
+                    }
+                ]
+            ),
+        )
+        for idx in range(13)
+    ]
+
+    with pytest.raises(ValueError, match="supports at most 12 panels"):
+        plot_perturbed_vs_clean_error_panels(
+            panel_frames,
+            model_col="model",
+            clean_col="MSE_test",
+            pert_col="MSE_w",
+            x_semantics=_perf_semantics("MSE_c"),
+            y_semantics=_plot_semantics(
+                direction="minimize",
+                axis_family="numeric",
+                neutral_value=None,
+                display_label="MSE_w",
+            ),
+        )
 
 
 def test_plot_improvement_trajectory_subplots_reject_missing_signature_values():
@@ -1405,13 +1721,19 @@ def test_plot_perturbation_curves_keeps_non_core_scenarios():
 
 
 def test_trajectory_output_label_rejects_disabled_revin_input_only():
+    method_display = load_parsed_core_figure_registry().method_display
+
     with pytest.raises(ValueError, match="unknown robustness method"):
-        trajectory_output_label_for_method("revin_input_only")
+        trajectory_output_label_for_method("revin_input_only", method_display=method_display)
 
 
 def test_trajectory_output_label_uses_configured_method_label():
+    method_display = load_parsed_core_figure_registry().method_display
+
+    for method, label in method_display.items():
+        assert trajectory_output_label_for_method(method, method_display=method_display) == f"+ {label}"
     assert (
-        trajectory_output_label_for_method("adversarial_training")
+        trajectory_output_label_for_method("adversarial_training", method_display=method_display)
         == "+ PGD adversarial training"
     )
 
@@ -1741,7 +2063,7 @@ def test_render_forecast_trace_csv_replays_plot_without_mlflow(tmp_path):
         )
     pd.DataFrame(rows).to_csv(trace_path, index=False)
 
-    fig = load_forecast_trace_figure(trace_path)
+    fig = load_forecast_trace_record(trace_path)["figure"]
 
     assert "clean MSE=0.1000" in str(fig.layout.title.text)
     assert "pert MSE=0.2000" in str(fig.layout.title.text)
@@ -1825,7 +2147,7 @@ def test_render_forecast_trace_csv_requires_method_unless_explicitly_supplied(tm
     _write_minimal_forecast_trace_csv(trace_path, robustness_method=None)
 
     with pytest.raises(ValueError, match="robustness_method"):
-        load_forecast_trace_figure(trace_path)
+        load_forecast_trace_record(trace_path)
 
     record = load_forecast_trace_record(
         trace_path,
@@ -2343,6 +2665,23 @@ def test_plot_error_distribution_overview_uses_raw_rows_without_weight_column():
     pert_trace = next(trace for trace in fig.data if trace.name == "err_pert")
     assert np.sort(np.asarray(clean_trace.y, dtype=float)).tolist() == [1.0, 3.0]
     assert np.sort(np.asarray(pert_trace.y, dtype=float)).tolist() == [2.0, 8.0]
+
+
+def test_plot_error_distribution_overview_wraps_facets_at_three_columns():
+    rows = []
+    for idx in range(4):
+        for error_kind, value in (("err_clean", 1.0), ("err_pert", 2.0)):
+            rows.append(
+                {
+                    "model_variant": f"variant_{idx}",
+                    "error_kind": error_kind,
+                    "error_value": value + idx,
+                }
+            )
+    fig = plot_error_distribution_overview(pd.DataFrame(rows), dataset="dataset_a")
+
+    assert fig.layout.width == 1050
+    assert fig.layout.height == 640
 
 
 def test_plot_error_distribution_overview_requires_both_error_kinds_per_facet():

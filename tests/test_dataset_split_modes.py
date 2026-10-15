@@ -1,9 +1,12 @@
+import warnings
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from data.data_module import TSDataModule
+from data.dataset import BatchSegment, TSDataset
 from data.datasets import DATASET_REGISTRY, DatasetSpec, ResolvedDatasetSpec, resolve_with_defaults, spec_to_tags
 from pipelines.signatures import compute_data_config_signature
 
@@ -61,6 +64,7 @@ def _make_datamodule(
         n_test_samples=None,
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=("drift",),
+        perturbation_severity_distribution="uniform",
         train_split=0.6,
         val_split=0.2,
         purged_fraction=purged_fraction,
@@ -108,13 +112,30 @@ def _make_signature_args(*, shuffle_batches_before_split: bool, purged_fraction:
 
 def test_dataset_spec_requires_consistent_split_mode():
     with pytest.raises(ValueError, match="without batch_column"):
-        DatasetSpec(key="demo", path="demo.csv", split_mode="within_batches")
+        DatasetSpec(
+            key="demo",
+            path="demo.csv",
+            split_mode="within_batches",
+            input_channels=("x",),
+        )
     with pytest.raises(ValueError, match="with batch_column"):
         DatasetSpec(
             key="demo",
             path="demo.csv",
             split_mode="temporal",
+            input_channels=("x",),
             batch_column="batch_id",
+        )
+
+
+@pytest.mark.parametrize("input_channels", [None, ()])
+def test_dataset_spec_requires_input_channels(input_channels):
+    with pytest.raises(ValueError, match="input_channels"):
+        DatasetSpec(
+            key="demo",
+            path="demo.csv",
+            split_mode="temporal",
+            input_channels=input_channels,
         )
 
 
@@ -322,6 +343,46 @@ def test_across_batches_preserves_whole_batch_assignment(tmp_path):
     assert [seg.batch_id for seg in _unwrap_dataset(dm.ds_test).segments] == ["batch_d"]
 
 
+@pytest.mark.parametrize("seed", [0, 1, 7, 42])
+@pytest.mark.parametrize(
+    ("segment_lengths", "n_samples"),
+    [
+        ((100,), 5),
+        ((100,), 10),
+        ((37, 64, 23), 6),
+        ((37, 64, 23), 50),
+    ],
+)
+def test_strict_iid_windows_never_overlap(seed, segment_lengths, n_samples):
+    input_len, target_len = 8, 2
+    seq_len = input_len + target_len
+    segments = []
+    start = 0
+    for batch_id, length in enumerate(segment_lengths):
+        segments.append(BatchSegment(start=start, length=length, batch_id=batch_id))
+        start += length
+    df = pd.DataFrame({"x": np.arange(start, dtype=np.float32)})
+
+    with warnings.catch_warnings():
+        # Requests near or above capacity warn by design.
+        warnings.simplefilter("ignore", RuntimeWarning)
+        dataset = TSDataset(
+            df=df,
+            input_len=input_len,
+            target_len=target_len,
+            n_samples=n_samples,
+            segments=segments,
+            seed=seed,
+            strict_iid=True,
+        )
+
+    capacity = sum(length // seq_len for length in segment_lengths)
+    starts = np.sort(dataset.sample_idxs)
+    assert starts.size == min(n_samples, capacity)
+    _assert_windows_respect_segments(dataset)
+    assert np.all(np.diff(starts) >= seq_len)
+
+
 def test_data_config_signature_includes_split_mode_and_relevant_policy_only():
     temporal_spec = SimpleNamespace(
         key="demo",
@@ -405,3 +466,56 @@ def test_data_config_signature_keeps_historical_channel_set_contract():
         dataset_spec=reordered_targets,
         args=args,
     )
+
+
+def _make_validation_datamodule(tmp_path, *, n_val_samples: int, batch_size: int) -> TSDataModule:
+    path = tmp_path / "validation.csv"
+    pd.DataFrame({"x": np.arange(200, dtype=float), "y": np.arange(200, dtype=float) * 2.0}).to_csv(
+        path,
+        index=False,
+    )
+    dm = TSDataModule(
+        dataset_spec=ResolvedDatasetSpec(
+            key="toy_validation",
+            path=str(path),
+            input_channels=("x", "y"),
+            target_channels=("x",),
+            target_alias=None,
+            split_mode="temporal",
+            description=None,
+            batch_column=None,
+        ),
+        input_len=4,
+        target_len=2,
+        n_train_samples=8,
+        n_val_samples=n_val_samples,
+        n_test_samples=4,
+        perturbation_channel_fraction_max=0.5,
+        perturbation_scenarios=("drift",),
+        perturbation_severity_distribution="uniform",
+        train_split=0.6,
+        val_split=0.2,
+        purged_fraction=0.0,
+        shuffle_batches_before_split=True,
+        batch_size=batch_size,
+        num_workers=0,
+        seed=42,
+        strict_iid=False,
+    )
+    dm.setup()
+    return dm
+
+
+def test_val_dataloader_scores_full_batches_only(tmp_path):
+    dm = _make_validation_datamodule(tmp_path, n_val_samples=10, batch_size=4)
+
+    batch_sizes = [x.shape[0] for x, _ in dm.val_dataloader()]
+
+    assert batch_sizes == [4, 4]
+
+
+def test_val_dataloader_rejects_split_smaller_than_one_batch(tmp_path):
+    dm = _make_validation_datamodule(tmp_path, n_val_samples=3, batch_size=4)
+
+    with pytest.raises(ValueError, match="validation split has 3 windows, fewer than batch_size=4"):
+        dm.val_dataloader()

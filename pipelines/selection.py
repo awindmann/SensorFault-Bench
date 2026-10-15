@@ -30,7 +30,6 @@ from pipelines.scope import (
 )
 from pipelines.specs import PipelineSpec
 from utils.parsing import (
-    DEGRADATION_SCORING_SEMANTICS,
     build_perturbation_scenarios_signature,
     coerce_int,
     extract_required_typed_hparams,
@@ -56,6 +55,7 @@ from utils.parsing import (
     require_namespace_value,
     require_nonempty_tag_value,
     require_perturbation_coupling_tags,
+    robustness_scoring_semantics_for_severity_distribution,
 )
 from utils.scoring import (
     build_canonical_degradation_context_signature,
@@ -65,9 +65,6 @@ from utils.scoring import (
     require_logged_degradation_metric_bundle,
     require_logged_fixed_channel_fraction_metric_bundle,
 )
-
-
-ROBUSTNESS_SCORING_SEMANTICS = DEGRADATION_SCORING_SEMANTICS
 
 
 def load_recipe_specs_for_scope() -> list[PipelineSpec]:
@@ -1507,7 +1504,11 @@ def is_fully_tested(run, *, args, client: Any | None = None) -> bool:
         key="robustness_scoring_semantics",
         run_id=run.info.run_id,
     )
-    if semantics != ROBUSTNESS_SCORING_SEMANTICS:
+    expected_semantics = robustness_scoring_semantics_for_severity_distribution(
+        require_namespace_value(args, key="perturbation_severity_distribution"),
+        key="args.perturbation_severity_distribution",
+    )
+    if semantics != expected_semantics:
         return False
 
     expected_eval_data_seed = resolve_effective_eval_data_seed(
@@ -1770,7 +1771,6 @@ def is_fixed_channel_fraction_complete(
 __all__ = [
     "CoverageMismatchError",
     "PIPELINE_CONFIGS_DIR",
-    "ROBUSTNESS_SCORING_SEMANTICS",
     "audit_and_apply_testing_coverage_policy",
     "build_base_index",
     "classify_lineage_run",

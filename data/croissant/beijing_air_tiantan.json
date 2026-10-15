@@ -1,0 +1,386 @@
+{
+  "@context": {
+    "@language": "en",
+    "@vocab": "https://schema.org/",
+    "citeAs": "cr:citeAs",
+    "column": "cr:column",
+    "conformsTo": "dct:conformsTo",
+    "cr": "http://mlcommons.org/croissant/",
+    "data": {
+      "@id": "cr:data",
+      "@type": "@json"
+    },
+    "dataBiases": "cr:dataBiases",
+    "dataCollection": "cr:dataCollection",
+    "dataType": {
+      "@id": "cr:dataType",
+      "@type": "@vocab"
+    },
+    "dct": "http://purl.org/dc/terms/",
+    "extract": "cr:extract",
+    "field": "cr:field",
+    "fileProperty": "cr:fileProperty",
+    "fileObject": "cr:fileObject",
+    "fileSet": "cr:fileSet",
+    "format": "cr:format",
+    "includes": "cr:includes",
+    "isEnumeration": "cr:isEnumeration",
+    "isLiveDataset": "cr:isLiveDataset",
+    "jsonPath": "cr:jsonPath",
+    "key": "cr:key",
+    "md5": "cr:md5",
+    "parentField": "cr:parentField",
+    "path": "cr:path",
+    "personalSensitiveInformation": "cr:personalSensitiveInformation",
+    "recordSet": "cr:recordSet",
+    "references": "cr:references",
+    "regex": "cr:regex",
+    "repeated": "cr:repeated",
+    "replace": "cr:replace",
+    "sc": "https://schema.org/",
+    "separator": "cr:separator",
+    "source": "cr:source",
+    "subField": "cr:subField",
+    "transform": "cr:transform",
+    "wd": "https://www.wikidata.org/wiki/",
+    "rai": "http://mlcommons.org/croissant/RAI/",
+    "prov": "http://www.w3.org/ns/prov#"
+  },
+  "alternateName": "",
+  "conformsTo": "http://mlcommons.org/croissant/1.0",
+  "license": {
+    "@type": "sc:CreativeWork",
+    "name": "CC BY-SA 4.0",
+    "url": "https://creativecommons.org/licenses/by-sa/4.0/"
+  },
+  "distribution": [
+    {
+      "contentUrl": "https://www.kaggle.com/api/v1/datasets/download/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset?datasetVersionNumber=2",
+      "contentSize": "888.083 KB",
+      "md5": "9ivJ1YQShz6aH0EmMXVOfA==",
+      "encodingFormat": "application/zip",
+      "@id": "archive.zip",
+      "@type": "cr:FileObject",
+      "name": "archive.zip",
+      "description": "Archive containing all the contents of the Beijing Air Tiantan PM2.5 Time Series Dataset dataset"
+    },
+    {
+      "contentUrl": "beijing_air_tiantan.csv",
+      "containedIn": {
+        "@id": "archive.zip"
+      },
+      "encodingFormat": "text/csv",
+      "@id": "beijing_air_tiantan.csv_fileobject",
+      "@type": "cr:FileObject",
+      "name": "beijing_air_tiantan.csv",
+      "description": "CSV mirror of the canonical Beijing Air Tiantan Parquet table."
+    },
+    {
+      "contentUrl": "beijing_air_tiantan.parquet",
+      "containedIn": {
+        "@id": "archive.zip"
+      },
+      "encodingFormat": "application/vnd.apache.parquet",
+      "@id": "beijing_air_tiantan.parquet_fileobject",
+      "@type": "cr:FileObject",
+      "name": "beijing_air_tiantan.parquet",
+      "description": "Canonical Parquet table for the Beijing Air Tiantan dataset."
+    },
+    {
+      "contentUrl": "README.md",
+      "containedIn": {
+        "@id": "archive.zip"
+      },
+      "encodingFormat": "text/markdown",
+      "@id": "README.md_fileobject",
+      "@type": "cr:FileObject",
+      "name": "README.md",
+      "description": "Dataset documentation and provenance notes for the Beijing Air Tiantan dataset."
+    },
+    {
+      "contentUrl": "checksums.sha256",
+      "containedIn": {
+        "@id": "archive.zip"
+      },
+      "encodingFormat": "text/plain",
+      "@id": "checksums.sha256_fileobject",
+      "@type": "cr:FileObject",
+      "name": "checksums.sha256",
+      "description": "Byte-level SHA256 checksum manifest for the packaged data files."
+    }
+  ],
+  "recordSet": [
+    {
+      "field": [
+        {
+          "dataType": [
+            "sc:Date"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "datetime"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/datetime",
+          "@type": "cr:Field",
+          "name": "datetime",
+          "description": "Hourly timestamp for the retained Tiantan station segment."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "PM2.5"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/PM2.5",
+          "@type": "cr:Field",
+          "name": "PM2.5",
+          "description": "Hourly PM2.5 concentration at Tiantan, used as the downstream forecast target."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "PM10"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/PM10",
+          "@type": "cr:Field",
+          "name": "PM10",
+          "description": "Hourly PM10 concentration at Tiantan."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "SO2"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/SO2",
+          "@type": "cr:Field",
+          "name": "SO2",
+          "description": "Hourly sulfur dioxide concentration at Tiantan."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "NO2"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/NO2",
+          "@type": "cr:Field",
+          "name": "NO2",
+          "description": "Hourly nitrogen dioxide concentration at Tiantan."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "CO"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/CO",
+          "@type": "cr:Field",
+          "name": "CO",
+          "description": "Hourly carbon monoxide concentration at Tiantan."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "O3"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/O3",
+          "@type": "cr:Field",
+          "name": "O3",
+          "description": "Hourly ozone concentration at Tiantan."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "TEMP"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/TEMP",
+          "@type": "cr:Field",
+          "name": "TEMP",
+          "description": "Hourly air temperature matched to the Tiantan station."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "PRES"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/PRES",
+          "@type": "cr:Field",
+          "name": "PRES",
+          "description": "Hourly atmospheric pressure matched to the Tiantan station."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "DEWP"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/DEWP",
+          "@type": "cr:Field",
+          "name": "DEWP",
+          "description": "Hourly dew point temperature matched to the Tiantan station."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "RAIN"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/RAIN",
+          "@type": "cr:Field",
+          "name": "RAIN",
+          "description": "Hourly precipitation matched to the Tiantan station."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "WSPM"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/WSPM",
+          "@type": "cr:Field",
+          "name": "WSPM",
+          "description": "Hourly wind speed matched to the Tiantan station."
+        },
+        {
+          "dataType": [
+            "sc:Float"
+          ],
+          "source": {
+            "fileObject": {
+              "@id": "beijing_air_tiantan.csv_fileobject"
+            },
+            "extract": {
+              "column": "wd"
+            }
+          },
+          "@id": "beijing_air_tiantan.csv/wd",
+          "@type": "cr:Field",
+          "name": "wd",
+          "description": "Integer-coded hourly wind direction category matched to the Tiantan station."
+        }
+      ],
+      "@id": "beijing_air_tiantan.csv",
+      "@type": "cr:RecordSet",
+      "name": "beijing_air_tiantan.csv",
+      "description": "CSV record set for the Beijing Air Tiantan derived hourly time series table. The packaged Parquet file contains the same rows and columns in canonical benchmark form."
+    }
+  ],
+  "version": 2,
+  "keywords": [
+    "technique > time series analysis",
+    "subject > earth and nature > environment > pollution",
+    "subject > earth and nature > earth science > atmospheric science",
+    "subject > earth and nature > environment > weather and climate",
+    "subject > earth and nature > environment"
+  ],
+  "isAccessibleForFree": true,
+  "includedInDataCatalog": {
+    "@type": "sc:DataCatalog",
+    "name": "Kaggle",
+    "url": "https://www.kaggle.com"
+  },
+  "creator": {
+    "@type": "sc:Person",
+    "name": "sensor.fault.bench",
+    "url": "/sensorfaultbench",
+    "image": "https://storage.googleapis.com/kaggle-avatars/thumbnails/default-thumb.png"
+  },
+  "publisher": {
+    "@type": "sc:Organization",
+    "name": "Kaggle",
+    "url": "https://www.kaggle.com/organizations/kaggle",
+    "image": "https://storage.googleapis.com/kaggle-organizations/4/thumbnail.png"
+  },
+  "thumbnailUrl": "https://storage.googleapis.com/kaggle-datasets-images/new-version-temp-images/default-backgrounds-46.png-34185974/dataset-card.png",
+  "dateModified": "2026-05-06T18:15:17.773",
+  "datePublished": "2026-05-06T17:57:25.7859174",
+  "@type": "sc:Dataset",
+  "name": "Beijing Air Tiantan PM2.5 Time Series Dataset",
+  "url": "https://www.kaggle.com/datasets/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset/versions/2",
+  "citeAs": "@inproceedings{windmann2026benchmarking,\n  title={Benchmarking Sensor-Fault Robustness in Forecasting},\n  author={Windmann, Alexander and Wittenberg, Philipp and Manca, Gianluca and Dix, Marcel and Brandt, Jens U. and Niggemann, Oliver},\n  booktitle={The Fortieth Annual Conference on Neural Information Processing Systems Evaluations and Datasets Track},\n  year={2026},\n  url={https://neurips.cc/virtual/2026/loc/paris/poster/138912}\n}",
+  "description": "Derived hourly air-quality and meteorological time series dataset for the Tiantan station from the Beijing Multi-Site Air Quality data collection at UCI. Source: https://archive.ics.uci.edu/dataset/501/beijing+multi+site+air+quality+data. The record contains a canonical Parquet benchmark file and CSV mirror for forecasting and sensor-fault robustness evaluation. It retains the longest Tiantan segment selected by documented gap rules, contains no missing values or duplicate timestamps, and uses PM2.5 as the downstream forecast target.",
+  "dct:conformsTo": "http://mlcommons.org/croissant/RAI/1.0",
+  "rai:dataLimitations": "Single-station Tiantan subset of a larger Beijing Air monitoring archive. The retained segment is selected by documented gap rules and remaining gaps are forward-filled only within the segment. The upstream UCI record states that meteorological variables are matched to each air-quality site from the nearest China Meteorological Administration weather station. The dataset is not recommended for health advice, regulatory decisions, or deployment without independent validation.",
+  "rai:dataBiases": "The dataset has geographic and station-selection bias toward the Tiantan monitoring site. Gap-based trimming may underrepresent periods with extended sensor outages or source missingness. The wind-direction channel is integer-coded and should be treated as discrete rather than continuous.",
+  "rai:personalSensitiveInformation": "No personal or human-subject records are included. The data describe public environmental measurements and weather variables, not individuals.",
+  "rai:dataUseCases": "The dataset is intended for reproducible time series forecasting experiments and sensor-fault robustness benchmarking under the accompanying benchmark protocol. The packaged files do not include sensor-fault labels, corrupted samples, or faulted samples because sensor-fault scenarios are generated by the benchmark code during evaluation. It is not validated for public-health, operational, regulatory, or deployment use.",
+  "rai:dataSocialImpact": "Positive use is transparent robustness evaluation for environmental time series forecasting. The main risk is overinterpreting benchmark results as environmental or health evidence.",
+  "rai:hasSyntheticData": false,
+  "prov:wasDerivedFrom": "https://archive.ics.uci.edu/dataset/501/beijing+multi+site+air+quality+data",
+  "prov:wasGeneratedBy": "Derived from the Tiantan station source CSV by constructing hourly datetimes, splitting at PM2.5 gaps longer than 24 hours, splitting at non-target feature gaps longer than 72 hours, selecting the longest retained segment, forward-filling remaining gaps only inside that segment, trimming unresolved leading rows if needed, applying no backward fill, exporting the canonical Parquet file, and packaging it with a CSV mirror and SHA256 checksum manifest."
+}

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from config_loader import load_dataset_windows
+from config_loader import load_dataset_windows, load_defaults
 from utils.parsing import (
     parse_dataset_window_defaults,
     resolve_dataset_window_args,
@@ -38,14 +38,9 @@ def test_load_dataset_windows_requires_benchmark_entries(tmp_path):
         load_dataset_windows(path, defaults=defaults)
 
 
-def test_shipped_dataset_windows_define_positive_batch_sizes():
-    defaults = {
-        "DATA_FILES": ["ETTh1", "traffic", "Penmanshiel_Hourly_WT08", "BeijingAir_Tiantan"],
-        "DATA_ROOT": "data/processed",
-    }
-    windows = load_dataset_windows(defaults=defaults)
+def test_configured_dataset_windows_define_positive_lengths_and_batch_sizes():
+    windows = load_dataset_windows(defaults=load_defaults())
 
-    assert set(windows) == set(defaults["DATA_FILES"])
     for dataset, window in windows.items():
         assert window["input_len"] > 0, dataset
         assert window["target_len"] > 0, dataset

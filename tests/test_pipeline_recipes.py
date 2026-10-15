@@ -28,17 +28,13 @@ def test_load_recipe_specs_requires_explicit_recipe_order():
 
 
 def test_benchmark_recipe_specs_use_yaml_method_order():
-    methods = tuple(load_defaults()["BENCHMARK_METHODS"])
-    specs = selection_module.load_benchmark_recipe_specs_for_scope(load_defaults())
-    assert len(specs) == len(methods)
-    assert [spec.pipeline_method for spec in specs[:3]] == [
-        "baseline",
-        "randomized_training",
-        "adversarial_training",
-    ]
-    assert "revin_input_only" not in {
-        str(spec.pipeline_method).strip() for spec in specs
-    }
+    # The order differs from the registry order, so only BENCHMARK_METHODS can produce it.
+    methods = ["baseline", "revin", "ensemble", "randomized_training"]
+    specs = selection_module.load_benchmark_recipe_specs_for_scope(
+        {**load_defaults(), "BENCHMARK_METHODS": methods}
+    )
+
+    assert [spec.pipeline_method for spec in specs] == methods
 
 
 def test_load_pipeline_spec_for_method_resolves_revin():

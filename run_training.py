@@ -44,6 +44,25 @@ def _recipe_specs_by_method(specs: list[PipelineSpec]) -> dict[str, PipelineSpec
     return specs_by_method
 
 
+def _training_order(
+    methods: list[str],
+    specs_by_method: dict[str, PipelineSpec],
+) -> list[str]:
+    """Order methods so that each trains after the runs it builds on.
+
+    Every method recipe inherits the hyperparameters of the best baseline run,
+    and wrapping methods wrap trained runs. Baseline therefore trains first and
+    wrapping methods last, while the order of ``--method`` decides otherwise.
+    """
+
+    def _rank(method: str) -> int:
+        if method == "baseline":
+            return 0
+        return 2 if specs_by_method[method].pipeline_kind == "wrap" else 1
+
+    return sorted(methods, key=_rank)
+
+
 def _recipe_param_defaults(extracted_defaults: list[dict[str, Any]]) -> dict[str, Any]:
     defaults: dict[str, Any] = {}
     for defaults_dict in extracted_defaults:
@@ -59,6 +78,10 @@ def main() -> None:
     extracted_defaults = extract_recipe_defaults_for_scope(pipeline_specs)
     defaults = merge_recipe_defaults_for_scope(base_defaults, extracted_defaults)
     parser = build_parser(defaults)
+    parser.description = (
+        "Train the benchmark scope or an explicit subset, with one hyperparameter "
+        "search per dataset, architecture, and method."
+    )
     args = parser.parse_args()
     args._explicit_cli_args = tuple(sys.argv[1:])
     args._recipe_param_overrides = parse_explicit_cli_overrides(
@@ -74,9 +97,12 @@ def main() -> None:
         extra_args=args._explicit_cli_args,
     )
 
-    methods = resolve_requested_methods(
-        args,
-        configured_methods=tuple(specs_by_method.keys()),
+    methods = _training_order(
+        resolve_requested_methods(
+            args,
+            configured_methods=tuple(specs_by_method.keys()),
+        ),
+        specs_by_method,
     )
     architectures = resolve_requested_architectures(args)
     method_architecture_scope = resolve_benchmark_method_architecture_scope(

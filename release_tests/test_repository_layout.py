@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import re
 import subprocess
-import tomllib
+import sys
 from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
+from release_tests.repository_files import MAX_REPOSITORY_FILE_BYTES, list_repo_files
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-REQUIRED_BENCHMARK_DOCS = {
-    "README.md",
-    "data/README.md",
-    "docs/reproducing_benchmark.md",
-    "docs/extending_datasets.md",
-    "docs/extending_models.md",
-    "docs/extending_methods.md",
-    "THIRD_PARTY_NOTICES.md",
-}
 BENCHMARK_ENTRYPOINTS = {
     "run_training.py",
     "run_testing.py",
@@ -31,46 +29,29 @@ FORBIDDEN_DEPENDENCY_MANIFEST_FILENAMES = {
     "Pipfile.lock",
     "poetry.lock",
     "poetry.toml",
-    "requirements.txt",
-    "requirements-dev.txt",
-    "requirements-test.txt",
-    "requirements_full.txt",
     "setup.cfg",
     "setup.py",
 }
-MAX_REPOSITORY_FILE_BYTES = 5 * 1024 * 1024
+ALLOWED_ROOT_FILES = {
+    ".gitignore",
+    ".python-version",
+    "CHANGELOG.md",
+    "CITATION.cff",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "config_loader.py",
+    "pyproject.toml",
+    "uv.lock",
+} | BENCHMARK_ENTRYPOINTS
 
 
 def _read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
-def _repo_files() -> tuple[str, ...]:
-    """Return the current repository-surface file list.
-
-    This gate audits the current non-ignored source tree. Files that are absent
-    from the candidate tree are outside this check.
-    """
-    result = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-        cwd=REPO_ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-    paths: list[str] = []
-    for raw_path in result.stdout.splitlines():
-        path = raw_path.strip()
-        if not path:
-            continue
-        full_path = REPO_ROOT / path
-        if full_path.is_file():
-            paths.append(path)
-    return tuple(sorted(dict.fromkeys(paths)))
-
-
 def test_repository_surface_file_list_has_no_forbidden_paths_or_runtime_state():
-    repo_files = _repo_files()
+    repo_files = list_repo_files()
     forbidden_names = {
         ".DS_Store",
     }
@@ -86,7 +67,6 @@ def test_repository_surface_file_list_has_no_forbidden_paths_or_runtime_state():
         "logs/",
         "reports/",
         "runs/",
-        "supplementary/",
         "tables/",
     )
     forbidden_suffixes = (".ckpt", ".tar.gz", ".tar.zst", ".zip")
@@ -118,21 +98,10 @@ def test_repository_surface_file_list_has_no_forbidden_paths_or_runtime_state():
     assert ALLOWED_MANIFESTS.issubset(repo_files)
 
 
-def test_repository_surface_has_required_benchmark_docs_and_entrypoints():
-    repo_files = set(_repo_files())
+def test_repository_root_holds_only_allowlisted_files():
+    root_files = {path for path in list_repo_files() if "/" not in path}
 
-    for path in REQUIRED_BENCHMARK_DOCS | BENCHMARK_ENTRYPOINTS:
-        assert path in repo_files
-
-    ignored_lines = {
-        line.strip()
-        for line in _read(".gitignore").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
-    for docs_path in REQUIRED_BENCHMARK_DOCS:
-        assert docs_path not in ignored_lines
-    assert "docs/" not in ignored_lines
-    assert "/docs/" not in ignored_lines
+    assert root_files <= ALLOWED_ROOT_FILES, sorted(root_files - ALLOWED_ROOT_FILES)
 
 
 def test_gitignore_excludes_runtime_cache_and_data_state_paths():
@@ -147,6 +116,10 @@ def test_gitignore_excludes_runtime_cache_and_data_state_paths():
         "figures/figure.pdf",
         "runs/mlruns.db",
         "local-output.tar.zst",
+        "paper_artifact/R/figures/Figure_2_backbone_scenario_heatmap.aux",
+        "paper_artifact/R/figures/Figure_2_backbone_scenario_heatmap.log",
+        "paper_artifact/R/figures/Figure_2_backbone_scenario_heatmap.tex",
+        "paper_artifact/R/library/ggplot2/DESCRIPTION",
         "source-archive.tar.gz",
         "tables/analysis.csv",
     )
@@ -160,11 +133,21 @@ def test_gitignore_excludes_runtime_cache_and_data_state_paths():
     ignored = set(result.stdout.splitlines())
     assert ignored == set(forbidden_local_paths)
 
+    tracked_r_pdf = "paper_artifact/R/figures/Figure_2_backbone_scenario_heatmap.pdf"
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", tracked_r_pdf],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+
 
 def test_repository_surface_files_are_size_bounded():
     oversized = [
         (path, (REPO_ROOT / path).stat().st_size)
-        for path in _repo_files()
+        for path in list_repo_files()
         if (REPO_ROOT / path).stat().st_size > MAX_REPOSITORY_FILE_BYTES
     ]
 

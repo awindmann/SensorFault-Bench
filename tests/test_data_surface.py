@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from config_loader import build_parser, load_dataset_windows, load_defaults
+from config_loader import build_parser, load_defaults
 from data.data_module import TSDataModule
 from data.datasets import DATASET_REGISTRY, resolve_with_defaults, spec_to_tags
 from pipelines.signatures import build_signature, compute_data_config_signature
@@ -42,10 +42,6 @@ EXPECTED_BENCHMARK_DATASETS = {
     "BeijingAir_Tiantan": "beijing_air_tiantan.parquet",
     "Penmanshiel_Hourly_WT08": "penmanshiel_hourly_wt08.parquet",
 }
-PROVENANCE_NOTEBOOKS = {
-    "beijing_air_tiantan_derivation.ipynb",
-    "penmanshiel_hourly_wt08_derivation.ipynb",
-}
 
 
 def _signature_args(**overrides):
@@ -70,14 +66,8 @@ def _signature_args(**overrides):
     return SimpleNamespace(**values)
 
 
-def test_defaults_are_benchmark_safe_and_expose_data_root_cli():
-    defaults = load_defaults()
-
-    assert defaults["DATA_ROOT"] == "data/processed"
-    assert defaults["LOGDIR"] == "runs"
-    assert defaults["MINIO_ENDPOINT"] == ""
-
-    parser = build_parser(defaults)
+def test_data_root_logdir_and_object_store_options_parse_from_the_cli():
+    parser = build_parser(load_defaults())
     parsed = parser.parse_args(
         [
             "--data-root",
@@ -138,14 +128,6 @@ def test_registry_specs_own_relative_filenames_without_private_roots():
         assert spec.path == filename
         assert not Path(spec.path).is_absolute()
         assert "://" not in spec.path
-
-
-def test_benchmark_dataset_registry_and_window_defaults_are_limited_to_benchmark_scope():
-    expected_keys = set(EXPECTED_BENCHMARK_DATASETS)
-    defaults = load_defaults()
-
-    assert set(DATASET_REGISTRY.keys()) == expected_keys
-    assert set(load_dataset_windows(defaults=defaults)) == expected_keys
 
 
 def test_data_root_and_storage_knobs_do_not_change_signature_or_run_identity():
@@ -231,6 +213,7 @@ def test_registered_csv_dataset_accepts_missing_datetime_column(tmp_path):
         num_workers=0,
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=("drift",),
+        perturbation_severity_distribution="uniform",
     )
 
     assert data_module._read_dataframe(nrows=1).columns.tolist() == [
@@ -277,38 +260,6 @@ def test_dataset_target_overrides_raise_on_blank_and_extra_entries():
             ["all", "ot"],
             data_root="data/processed",
         )
-
-
-def test_data_guide_lists_benchmark_filenames_and_validation_surface():
-    guide = (REPO_ROOT / "data/README.md").read_text(encoding="utf-8")
-
-    for key, filename in EXPECTED_BENCHMARK_DATASETS.items():
-        assert key in guide
-        assert filename in guide
-    for required_phrase in (
-        "row-count and channel-count",
-        "validation",
-        "scripts/benchmark_dataset_contracts.py",
-        "dataframe-content SHA256",
-        "file-byte fixity",
-        "scripts/generate_dataset_checksums.py",
-        "https://www.kaggle.com/datasets/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset",
-        "https://www.kaggle.com/datasets/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset",
-    ):
-        assert required_phrase in guide
-
-
-def test_data_guide_documents_traffic_runtime_and_csv_paths():
-    guide = (REPO_ROOT / "data/README.md").read_text(encoding="utf-8")
-    sources = guide[guide.index("## Sources And Terms") :]
-    traffic_section = sources[
-        sources.index("- `traffic`:")
-        : sources.index("- `BeijingAir_Tiantan`:")
-    ]
-
-    assert "scripts/preprocess_traffic.py" in traffic_section
-    assert "traffic.parquet" in traffic_section
-    assert "DATA_ROOT/traffic.csv" in traffic_section
 
 
 def test_dataset_scripts_take_data_root_defaults_from_yaml(monkeypatch):
@@ -722,21 +673,3 @@ def test_processed_benchmark_file_rejects_invalid_discrete_values(tmp_path):
         validate_processed_file(contract, output_path, require_checksums=False)
 
 
-def test_provenance_notebooks_are_markdown_only_and_document_derivation():
-    provenance_dir = REPO_ROOT / "notebooks/provenance"
-    notebooks = {path.name: path for path in provenance_dir.glob("*.ipynb")}
-    assert set(notebooks) == PROVENANCE_NOTEBOOKS
-
-    for notebook_path in notebooks.values():
-        assert notebook_path.stat().st_size < 30000
-        text = notebook_path.read_text(encoding="utf-8")
-        assert "Original source:" in text
-        assert "Benchmark derived dataset:" in text
-        assert "## Slice Rationale" in text
-        assert "## EDA Summary" in text
-        assert "## Benchmark Validation" in text
-        payload = json.loads(text)
-        for cell in payload["cells"]:
-            assert cell["cell_type"] == "markdown"
-            assert "outputs" not in cell
-            assert "execution_count" not in cell

@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -48,11 +50,20 @@ _OKABE_ITO: Sequence[str] = [
 _TEXT_WIDTH_PX = 550
 _SINGLE_HEIGHT_PX = 380
 _PANEL_HEIGHT_PX = 320
+_MULTIPANEL_MIN_PANEL_WIDTH_PX = 320
+_MULTIPANEL_MIN_PANEL_HEIGHT_PX = 360
+_MULTIPANEL_MAX_COLS = 3
 _PUB_FONT = dict(size=10, family=_FONT_FAMILY)
 _PUB_TICK_SIZE = 9
 _PUB_ANNOTATION_SIZE = 9
 _PUB_MARKER_SIZE = 8
 _PUB_LEGEND_SIZE = 9
+_PANEL_FONT = dict(size=12, family=_FONT_FAMILY)
+_PANEL_SUBPLOT_TITLE_SIZE = 12
+_PANEL_TICK_SIZE = 11
+_PANEL_TEXT_SIZE = 11
+_PANEL_LEGEND_SIZE = 11
+_PANEL_MARKER_SIZE = 9
 
 # Diagnostic-tier (browser / interactive viewing).
 _DIAG_FONT = dict(size=16, family=_FONT_FAMILY)
@@ -121,6 +132,85 @@ def robustness_metric_display_name(metric_key: str) -> str:
             f"Known keys: {sorted(ROBUSTNESS_METRIC_DISPLAY.keys())}."
         )
     return title
+
+
+def _dataset_panel_grid_geometry(
+    n_panels: int,
+) -> tuple[int, int, int, int, float, float]:
+    if n_panels < 1 or n_panels > 12:
+        raise ValueError(f"Dataset panel layout expects 1-12 panels, got {n_panels}.")
+    if n_panels <= 3:
+        cols = n_panels
+        rows = 1
+        width = (
+            _TEXT_WIDTH_PX
+            if cols <= 2
+            else int(_TEXT_WIDTH_PX * (cols / 2.0))
+        )
+        height = _SINGLE_HEIGHT_PX
+    elif n_panels == 4:
+        cols = 2
+        rows = 2
+        width = _TEXT_WIDTH_PX
+        height = _TEXT_WIDTH_PX
+    else:
+        cols = _MULTIPANEL_MAX_COLS
+        rows = math.ceil(n_panels / cols)
+        width = max(_TEXT_WIDTH_PX, _MULTIPANEL_MIN_PANEL_WIDTH_PX * cols)
+        height = _MULTIPANEL_MIN_PANEL_HEIGHT_PX * rows
+    horizontal_spacing = 0.04 if cols >= 3 else 0.12
+    vertical_spacing = 0.08 if rows > 1 else 0.0
+    return rows, cols, width, height, horizontal_spacing, vertical_spacing
+
+
+def _hide_empty_subplot_axes(
+    fig: go.Figure,
+    *,
+    n_panels: int,
+    rows: int,
+    cols: int,
+) -> None:
+    for empty_idx in range(n_panels, rows * cols):
+        row = empty_idx // cols + 1
+        col = empty_idx % cols + 1
+        fig.update_xaxes(visible=False, row=row, col=col)
+        fig.update_yaxes(visible=False, row=row, col=col)
+
+
+def _add_in_panel_pareto_frontier_key(
+    fig: go.Figure,
+    *,
+    row: int,
+    col: int,
+    cols: int,
+) -> None:
+    xref, yref = _subplot_axis_refs(row=row, col=col, cols=cols)
+    xdomain_ref = f"{xref} domain"
+    ydomain_ref = f"{yref} domain"
+    y_pos = 0.92
+    fig.add_shape(
+        type="line",
+        x0=0.55,
+        x1=0.72,
+        y0=y_pos,
+        y1=y_pos,
+        xref=xdomain_ref,
+        yref=ydomain_ref,
+        line=_PARETO_LINE,
+    )
+    fig.add_annotation(
+        x=0.75,
+        y=y_pos,
+        xref=xdomain_ref,
+        yref=ydomain_ref,
+        text="Pareto frontier",
+        showarrow=False,
+        xanchor="left",
+        yanchor="middle",
+        font=dict(size=_PANEL_LEGEND_SIZE, family=_FONT_FAMILY),
+        bgcolor="rgba(255,255,255,0.80)",
+        borderpad=1,
+    )
 
 
 def metric_display_name(metric_key: str) -> str:
@@ -228,25 +318,18 @@ def _pretty_robust_title(col_name: str, include_mean_hint: bool = True) -> str:
     return title
 
 
-def _trajectory_output_display_map() -> dict[str, str]:
-    return {
-        "adaptive_robust_loss": "Adaptive Robust Loss",
-        "revin": "RevIN",
-        "ensemble": "Ensemble",
-        "randomized_training": "Randomized Training",
-        "adversarial_training": "PGD adversarial training",
-        "fault_augmentation": "Fault Augmentation",
-        "randomized_smoothing": "Randomized Smoothing",
-    }
-
-
-def trajectory_output_label_for_method(method: str) -> str:
+def trajectory_output_label_for_method(
+    method: str,
+    *,
+    method_display: Mapping[str, str],
+) -> str:
+    """Label a method's trajectory end point with its configured display name."""
     method_key = str(method).strip()
     if not method_key:
         raise ValueError(
             "Cannot build trajectory legend label for empty robustness method."
         )
-    display_name = _trajectory_output_display_map().get(method_key)
+    display_name = method_display.get(method_key)
     if display_name is None:
         raise ValueError(
             "Cannot build trajectory legend label for unknown robustness method "
@@ -1367,9 +1450,9 @@ def plot_pareto_dataset_panels(
             f"x_semantics.direction={x_record.direction!r}."
         )
     n_panels = len(panel_frames)
-    if n_panels < 1 or n_panels > 4:
+    if n_panels < 1 or n_panels > 12:
         raise ValueError(
-            "Dataset Pareto panel plot expects between 1 and 4 panels, "
+            "Dataset Pareto panel plot expects between 1 and 12 panels, "
             f"got {n_panels}."
         )
     for panel_title, panel_df in panel_frames:
@@ -1403,19 +1486,25 @@ def plot_pareto_dataset_panels(
     )
     y_range = list(_axis_range_from_semantics(all_robust, y_record))
 
-    n_rows, n_cols = 1, n_panels
+    n_rows, n_cols, width_px, height_px, horizontal_spacing, vertical_spacing = (
+        _dataset_panel_grid_geometry(n_panels)
+    )
+    subplot_titles = [title for title, _ in panel_frames]
+    if n_rows * n_cols > n_panels:
+        subplot_titles.extend([""] * (n_rows * n_cols - n_panels))
 
     fig = make_subplots(
         rows=n_rows,
         cols=n_cols,
         shared_yaxes=True,
-        horizontal_spacing=0.04 if n_cols >= 3 else 0.12,
-        vertical_spacing=0.0,
-        subplot_titles=[title for title, _ in panel_frames],
+        horizontal_spacing=horizontal_spacing,
+        vertical_spacing=vertical_spacing,
+        subplot_titles=subplot_titles,
     )
 
     shown_legend_groups: set[str] = set()
-    pareto_legend_shown = not show_pareto_legend
+    pareto_key_panel = (1, min(n_cols, n_panels)) if show_pareto_legend else None
+    has_pareto_frontier = False
 
     for panel_idx, (_, panel_df) in enumerate(panel_frames):
         row = panel_idx // n_cols + 1
@@ -1441,10 +1530,10 @@ def plot_pareto_dataset_panels(
                     mode="markers+text",
                     text=group_df[model_col],
                     textposition="top center",
-                    textfont=dict(size=_PUB_TICK_SIZE - 1),
+                    textfont=dict(size=_PANEL_TEXT_SIZE),
                     cliponaxis=False,
                     marker=dict(
-                        size=_PUB_MARKER_SIZE,
+                        size=_PANEL_MARKER_SIZE,
                         color=color_map[group_value],
                     ),
                     name=group_value,
@@ -1474,13 +1563,13 @@ def plot_pareto_dataset_panels(
                     line=_PARETO_LINE,
                     name="Pareto frontier",
                     legendgroup="pareto_frontier",
-                    showlegend=not pareto_legend_shown,
+                    showlegend=False,
                     hoverinfo="skip",
                 ),
                 row=row,
                 col=col,
             )
-            pareto_legend_shown = True
+            has_pareto_frontier = True
 
         # Per-panel x range (dataset-local performance scale).
         x_vals = df[perf_col].to_numpy(dtype=float)
@@ -1491,16 +1580,18 @@ def plot_pareto_dataset_panels(
             )
         )
 
-        is_bottom_row = row == n_rows
+        # The lowest panel of each column carries the x-axis title, also when
+        # the cell below it stays empty in an incomplete last row.
+        is_column_bottom = panel_idx + n_cols >= n_panels
         is_left_col = col == 1
         fig.update_xaxes(
-            title_text=(x_title or x_record.display_label) if is_bottom_row else None,
-            title_font=dict(size=_PUB_FONT["size"]),
+            title_text=(x_title or x_record.display_label) if is_column_bottom else None,
+            title_font=dict(size=_PANEL_FONT["size"]),
             range=x_range,
             ticks="outside",
             ticklen=4,
             tickwidth=1,
-            tickfont=dict(size=_PUB_TICK_SIZE),
+            tickfont=dict(size=_PANEL_TICK_SIZE),
             showline=True,
             mirror=True,
             zeroline=False,
@@ -1511,12 +1602,12 @@ def plot_pareto_dataset_panels(
         )
         fig.update_yaxes(
             title_text=(y_title or y_record.display_label) if is_left_col else None,
-            title_font=dict(size=_PUB_FONT["size"]),
+            title_font=dict(size=_PANEL_FONT["size"]),
             range=y_range,
             ticks="outside",
             ticklen=4,
             tickwidth=1,
-            tickfont=dict(size=_PUB_TICK_SIZE),
+            tickfont=dict(size=_PANEL_TICK_SIZE),
             showline=True,
             mirror=True,
             zeroline=False,
@@ -1526,23 +1617,29 @@ def plot_pareto_dataset_panels(
             col=col,
         )
 
+    _hide_empty_subplot_axes(fig, n_panels=n_panels, rows=n_rows, cols=n_cols)
+
     # Style subplot titles.
     for annotation in fig.layout.annotations:
-        annotation.font = dict(size=_PUB_FONT["size"], family=_FONT_FAMILY)
+        annotation.font = dict(size=_PANEL_SUBPLOT_TITLE_SIZE, family=_FONT_FAMILY)
+
+    if pareto_key_panel is not None and has_pareto_frontier:
+        _add_in_panel_pareto_frontier_key(
+            fig,
+            row=pareto_key_panel[0],
+            col=pareto_key_panel[1],
+            cols=n_cols,
+        )
 
     fig.update_layout(
         template="plotly_white",
-        width=(
-            _TEXT_WIDTH_PX
-            if n_cols <= 2
-            else int(_TEXT_WIDTH_PX * (n_cols / 2.0))
-        ),
-        height=_SINGLE_HEIGHT_PX,
+        width=width_px,
+        height=height_px,
         autosize=False,
         legend_title_text=color_label if show_group_legend else None,
-        legend=dict(font=dict(size=_PUB_LEGEND_SIZE)),
+        legend=dict(font=dict(size=_PANEL_LEGEND_SIZE)),
         margin=dict(l=10, r=10, t=28, b=28),
-        font=_PUB_FONT,
+        font=_PANEL_FONT,
     )
     return fig
 
@@ -1751,9 +1848,9 @@ def plot_perturbed_vs_clean_error_panels(
 ) -> go.Figure:
     if not panel_frames:
         raise ValueError("Perturbed-vs-clean panel plot requires at least one panel.")
-    if len(panel_frames) > 4:
+    if len(panel_frames) > 12:
         raise ValueError(
-            "Perturbed-vs-clean panel plot supports at most 4 panels, "
+            "Perturbed-vs-clean panel plot supports at most 12 panels, "
             f"got {len(panel_frames)}."
         )
 
@@ -1802,17 +1899,25 @@ def plot_perturbed_vs_clean_error_panels(
 
     color_map = _ranked_performance_color_map(sorted(color_values))
     n_panels = len(prepared_frames)
+    n_rows, n_cols, width_px, height_px, horizontal_spacing, vertical_spacing = (
+        _dataset_panel_grid_geometry(n_panels)
+    )
+    subplot_titles = [title for title, _ in prepared_frames]
+    if n_rows * n_cols > n_panels:
+        subplot_titles.extend([""] * (n_rows * n_cols - n_panels))
     fig = make_subplots(
-        rows=1,
-        cols=n_panels,
+        rows=n_rows,
+        cols=n_cols,
         shared_yaxes=False,
-        horizontal_spacing=0.04 if n_panels >= 3 else 0.12,
-        subplot_titles=[title for title, _ in prepared_frames],
+        horizontal_spacing=horizontal_spacing,
+        vertical_spacing=vertical_spacing,
+        subplot_titles=subplot_titles,
     )
 
     shown_legend_groups: set[str] = set()
     for panel_idx, (_, panel_df) in enumerate(prepared_frames):
-        col = panel_idx + 1
+        row = panel_idx // n_cols + 1
+        col = panel_idx % n_cols + 1
         for group_value in sorted(panel_df[color_key].unique()):
             group_df = panel_df.loc[
                 panel_df[color_key].astype(str).str.strip() == group_value
@@ -1842,7 +1947,7 @@ def plot_perturbed_vs_clean_error_panels(
                         f"{pert_col}: %{{y:.4f}}<extra></extra>"
                     ),
                 ),
-                row=1,
+                row=row,
                 col=col,
             )
             shown_legend_groups.add(group_value)
@@ -1866,13 +1971,17 @@ def plot_perturbed_vs_clean_error_panels(
                 hoverinfo="skip",
                 showlegend=False,
             ),
-            row=1,
+            row=row,
             col=col,
         )
 
-        _, yref = _subplot_axis_refs(row=1, col=col, cols=n_panels)
+        _, yref = _subplot_axis_refs(row=row, col=col, cols=n_cols)
+        # The lowest panel of each column carries the x-axis title, also when
+        # the cell below it stays empty in an incomplete last row.
+        is_column_bottom = panel_idx + n_cols >= n_panels
+        is_left_col = col == 1
         fig.update_xaxes(
-            title_text=x_title or x_record.display_label,
+            title_text=(x_title or x_record.display_label) if is_column_bottom else None,
             title_font=dict(size=_PUB_FONT["size"]),
             range=[panel_min, panel_max],
             ticks="outside",
@@ -1887,11 +1996,11 @@ def plot_perturbed_vs_clean_error_panels(
             scaleanchor=yref,
             scaleratio=1,
             constrain="domain",
-            row=1,
+            row=row,
             col=col,
         )
         fig.update_yaxes(
-            title_text=(y_title or y_record.display_label) if col == 1 else None,
+            title_text=(y_title or y_record.display_label) if is_left_col else None,
             title_font=dict(size=_PUB_FONT["size"]),
             range=[panel_min, panel_max],
             ticks="outside",
@@ -1903,21 +2012,19 @@ def plot_perturbed_vs_clean_error_panels(
             zeroline=False,
             showgrid=True,
             gridcolor=_GRID_COLOR,
-            row=1,
+            row=row,
             col=col,
         )
+
+    _hide_empty_subplot_axes(fig, n_panels=n_panels, rows=n_rows, cols=n_cols)
 
     for annotation in fig.layout.annotations:
         annotation.font = dict(size=_PUB_FONT["size"], family=_FONT_FAMILY)
 
     fig.update_layout(
         template="plotly_white",
-        width=(
-            _TEXT_WIDTH_PX
-            if n_panels <= 2
-            else int(_TEXT_WIDTH_PX * (n_panels / 2.0))
-        ),
-        height=_SINGLE_HEIGHT_PX,
+        width=width_px,
+        height=height_px,
         autosize=False,
         legend_title_text=color_key.replace("_", " ").title() if show_group_legend else None,
         legend=dict(font=dict(size=_PUB_LEGEND_SIZE)),
@@ -2001,7 +2108,7 @@ def plot_error_distribution_overview(
             f"for every facet. Invalid facets: {examples}."
         )
 
-    facet_wrap = 4
+    facet_wrap = _MULTIPANEL_MAX_COLS
     fig = px.violin(
         plot_df,
         x=error_kind_col,
@@ -2532,24 +2639,39 @@ def _validate_trajectory_panel_spec(
             )
         seen_dataset_keys.add(dataset_text)
         normalized_spec.append((dataset_text, title_text))
-    if len(normalized_spec) > 4:
+    if len(normalized_spec) > 12:
         raise ValueError(
-            f"{context}: panel spec supports at most 4 datasets, got {len(normalized_spec)}."
+            f"{context}: panel spec supports at most 12 datasets, got {len(normalized_spec)}."
         )
     return normalized_spec
 
 
 def _trajectory_subplot_geometry(
     n_panels: int,
-) -> tuple[int, int, int, float, float]:
+) -> tuple[int, int, int, int, float, float]:
     if n_panels == 1:
-        return 1, 1, _SINGLE_HEIGHT_PX, 0.0, 0.0
+        return 1, 1, _TEXT_WIDTH_PX, _SINGLE_HEIGHT_PX, 0.0, 0.0
     if n_panels == 2:
-        return 1, 2, _PANEL_HEIGHT_PX, 0.12, 0.0
-    if n_panels in {3, 4}:
-        return 2, 2, _TEXT_WIDTH_PX, 0.12, 0.18
+        return 1, 2, _TEXT_WIDTH_PX, _PANEL_HEIGHT_PX, 0.12, 0.0
+    if n_panels == 3:
+        return (
+            1,
+            3,
+            int(_TEXT_WIDTH_PX * 1.5),
+            _SINGLE_HEIGHT_PX,
+            0.04,
+            0.0,
+        )
+    if n_panels == 4:
+        return 2, 2, _TEXT_WIDTH_PX, _TEXT_WIDTH_PX, 0.12, 0.18
+    if n_panels <= 12:
+        n_cols = _MULTIPANEL_MAX_COLS
+        n_rows = math.ceil(n_panels / n_cols)
+        width = max(_TEXT_WIDTH_PX, _MULTIPANEL_MIN_PANEL_WIDTH_PX * n_cols)
+        height = _MULTIPANEL_MIN_PANEL_HEIGHT_PX * n_rows
+        return n_rows, n_cols, width, height, 0.10, 0.16
     raise ValueError(
-        f"Trajectory subplot layout requires 1-4 panels, got {n_panels}."
+        f"Trajectory subplot layout requires 1-12 panels, got {n_panels}."
     )
 
 
@@ -2698,7 +2820,7 @@ def plot_improvement_trajectory_subplots(
         )
 
     n_panels = len(panel_data)
-    rows, cols, height_px, horizontal_spacing, vertical_spacing = (
+    rows, cols, width_px, height_px, horizontal_spacing, vertical_spacing = (
         _trajectory_subplot_geometry(n_panels)
     )
     subplot_titles = [panel_title for _, panel_title, _, _, _ in panel_data]
@@ -2779,12 +2901,14 @@ def plot_improvement_trajectory_subplots(
             perf_lower_is_better=perf_minimize,
             flip_perf_axis=flip_perf_axis,
         )
-        is_bottom_row = row == rows
+        # The lowest panel of each column carries the x-axis title, also when
+        # the cell below it stays empty in an incomplete last row.
+        is_column_bottom = panel_idx + cols >= n_panels
         is_left_col = col == 1
         fig.update_xaxes(
             title_text=(
                 x_title or x_record.display_label
-            ) if is_bottom_row else None,
+            ) if is_column_bottom else None,
             title_font=dict(size=_PUB_FONT["size"]),
             range=x_range,
             ticks="outside",
@@ -2818,11 +2942,7 @@ def plot_improvement_trajectory_subplots(
             col=col,
         )
 
-    for empty_idx in range(n_panels, rows * cols):
-        row = empty_idx // cols + 1
-        col = empty_idx % cols + 1
-        fig.update_xaxes(visible=False, row=row, col=col)
-        fig.update_yaxes(visible=False, row=row, col=col)
+    _hide_empty_subplot_axes(fig, n_panels=n_panels, rows=rows, cols=cols)
 
     _add_trajectory_legend_traces(
         fig,
@@ -2840,7 +2960,7 @@ def plot_improvement_trajectory_subplots(
 
     fig.update_layout(
         template="plotly_white",
-        width=_TEXT_WIDTH_PX,
+        width=width_px,
         height=height_px,
         autosize=False,
         legend_title_text="Backbone" if show_group_legend else None,

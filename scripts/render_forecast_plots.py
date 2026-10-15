@@ -16,6 +16,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from data.samplers import resolve_severity_distribution  # noqa: E402
 from utils.parsing import (  # noqa: E402
     build_mlflow_tracking_uri,
     parse_required_bool,
@@ -723,6 +724,7 @@ def _build_runtime_args(defaults: Mapping[str, Any], cli_args: Namespace) -> Nam
         strict_iid=defaults["STRICT_IID"],
         perturbation_channel_fraction_max=defaults["PERTURBATION_CHANNEL_FRACTION_MAX"],
         perturbation_scenarios=defaults["PERTURBATION_SCENARIOS"],
+        perturbation_severity_distribution=defaults["PERTURBATION_SEVERITY_DISTRIBUTION"],
         eval_data_seed=cli_args.eval_data_seed,
         full_coverage=defaults["FULL_COVERAGE"],
         bootstrap_ci_resamples=defaults["BOOTSTRAP_CI_RESAMPLES"],
@@ -1663,19 +1665,6 @@ def load_forecast_trace_record(
     }
 
 
-def load_forecast_trace_figure(
-    path: Path,
-    *,
-    mode: str = "full",
-    missing_robustness_method: str | None = None,
-):
-    return load_forecast_trace_record(
-        path,
-        mode=mode,
-        missing_robustness_method=missing_robustness_method,
-    )["figure"]
-
-
 def _trace_paths(args: Namespace) -> list[Path]:
     paths: list[Path] = []
     for trace_csv in args.trace_csv:
@@ -1846,6 +1835,10 @@ def _render_group(
             sample_rows=sample_rows,
             test_metric=str(dataset_args.test_metric),
             eval_data_seed=eval_data_seed,
+            severity_distribution=resolve_severity_distribution(
+                require_namespace_value(dataset_args, key="perturbation_severity_distribution"),
+                key="dataset_args.perturbation_severity_distribution",
+            ),
             runtime_device=runtime_device,
             runtime_precision=require_namespace_value(dataset_args, key="precision"),
         )

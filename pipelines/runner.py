@@ -12,6 +12,7 @@ from typing import Any, Optional
 from mlflow.entities import ViewType
 
 from config_loader import load_hparams
+from data.datasets import require_run_channel_order
 from data.perturbations import (
     PERTURBATION_REGISTRY,
 )
@@ -823,6 +824,42 @@ class PipelineRunner:
             f"{dataset_name}:{architecture}:{data_config_signature}:"
             f"{pipeline_method}:{pipeline_kind}:{_TUNING_STRATEGY_RANDOM_SUBGRID}"
         )
+
+    def _require_channel_order_of_finished_runs(
+        self,
+        *,
+        client: Any,
+        experiment_id: str,
+        dataset_spec: Any,
+        architecture: str,
+    ) -> None:
+        """Reject finished runs trained under another channel order.
+
+        The data config signature compares channel sets, so a reordered dataset
+        resolves to the same experiment. Its finished runs must not count toward
+        the tuning budget or serve as baselines, because their checkpoints do not
+        match the current inputs and targets.
+        """
+        runs = search_runs_all(
+            client,
+            [experiment_id],
+            filter_string=" AND ".join(
+                (
+                    "tags.stage = 'train'",
+                    f"tags.dataset = '{dataset_spec.key}'",
+                    f"tags.model_architecture = '{architecture}'",
+                )
+            ),
+            run_view_type=ViewType.ACTIVE_ONLY,
+            max_results=1000,
+        )
+        for run in runs:
+            tags = run.data.tags or {}
+            if tags.get("mlflow.parentRunId"):
+                continue
+            if str(getattr(run.info, "status", "") or "").upper() != "FINISHED":
+                continue
+            require_run_channel_order(tags, dataset_spec, run_id=run.info.run_id)
 
     def _collect_consumed_signatures(
         self,
@@ -1775,6 +1812,12 @@ class PipelineRunner:
             client,
             experiment_name,
             data_config_signature,
+        )
+        self._require_channel_order_of_finished_runs(
+            client=client,
+            experiment_id=experiment_id,
+            dataset_spec=dataset_spec,
+            architecture=architecture,
         )
         rerun_requested = bool(getattr(self.args, "rerun", False))
         is_finetune_recipe = self.spec.pipeline_kind == "finetune"

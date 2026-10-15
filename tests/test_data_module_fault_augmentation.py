@@ -1,3 +1,5 @@
+import pickle
+
 import pandas as pd
 import pytest
 import torch
@@ -128,6 +130,7 @@ def _make_fault_aug_datamodule(
         n_test_samples=4,
         perturbation_channel_fraction_max=0.5,
         perturbation_scenarios=("drift", "noise"),
+        perturbation_severity_distribution="uniform",
         train_split=0.6,
         val_split=0.2,
         purged_fraction=0.0,
@@ -170,6 +173,7 @@ def test_datamodule_rejects_fault_augmentation_without_resolved_scenarios(tmp_pa
             n_test_samples=4,
             perturbation_channel_fraction_max=0.5,
             perturbation_scenarios=("drift",),
+            perturbation_severity_distribution="uniform",
             train_split=0.6,
             val_split=0.2,
             purged_fraction=0.0,
@@ -261,3 +265,24 @@ def test_datamodule_train_sampler_samples_native_severity_up_to_max(tmp_path):
         "packet_loss",
     }
     assert max_severity <= 0.4
+
+
+def test_fault_augmented_train_dataset_pickles_for_spawned_workers(tmp_path):
+    dm = _make_fault_aug_datamodule(
+        tmp_path,
+        train_perturbation_severity_max=0.4,
+    )
+    dm.setup()
+
+    restored = pickle.loads(pickle.dumps(dm.ds_train))
+
+    original_draws = [
+        dm.ds_train.perturbation_sampler(torch.Generator().manual_seed(seed)) for seed in range(16)
+    ]
+    restored_draws = [
+        restored.perturbation_sampler(torch.Generator().manual_seed(seed)) for seed in range(16)
+    ]
+    assert [(p.name, s) for p, s in restored_draws] == [
+        (p.name, s) for p, s in original_draws
+    ]
+    assert max(severity for _, severity in restored_draws) <= 0.4

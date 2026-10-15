@@ -1,0 +1,5 @@
+dataset,spearman_D_w,spearman_MSE_w,uniform_D_w_winner,beta_D_w_winner,D_w_winner_changed,uniform_MSE_w_winner,beta_MSE_w_winner,MSE_w_winner_changed,worst_scenario_agreement,worst_scenario_class_agreement,n_architectures
+BeijingAir_Tiantan,1.0,0.8571428571428573,TSMixer,TSMixer,False,GRU,GRU,False,5,6,7
+Penmanshiel_Hourly_WT08,0.9642857142857145,0.9285714285714288,GRU,GRU,False,GRU,ModernTCN,True,6,6,7
+ETTh1,0.9285714285714288,0.8214285714285715,GRU,GRU,False,DLinear,DLinear,False,3,7,7
+traffic,0.9642857142857145,0.8928571428571429,DLinear,DLinear,False,ModernTCN,PatchTST,True,7,7,7

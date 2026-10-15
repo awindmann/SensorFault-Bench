@@ -14,6 +14,7 @@ from data.samplers import (
 from utils.noise import apply_raw_space_noise
 from utils.parsing import (
     build_noise_channel_mask,
+    parse_required_nonnegative_float,
     parse_train_perturbation_probability,
     validate_input_stats,
     validate_noise_channels,
@@ -119,7 +120,6 @@ class TSDataset(Dataset):
 
         self.total_seq_len = self.input_len + self.target_len
         self.strict_iid = strict_iid
-        self._all_start_positions = self._build_all_start_positions()
 
         if self.random_sampling:
             if n_samples is None:
@@ -129,48 +129,37 @@ class TSDataset(Dataset):
                 self.sample_idxs = self._build_block_sampled_positions(n_samples)
                 self.n_samples = len(self.sample_idxs)
             else:
-                selected = self.rng.choice(len(self._all_start_positions), size=n_samples, replace=True)
-                self.sample_idxs = self._all_start_positions[selected]
+                all_starts = self._build_start_positions(stride=1)
+                selected = self.rng.choice(len(all_starts), size=n_samples, replace=True)
+                self.sample_idxs = all_starts[selected]
                 self.n_samples = int(n_samples)
         else:
-            sequential_starts = self._build_sequential_start_positions()
-            self.sample_idxs = sequential_starts
+            self.sample_idxs = self._build_start_positions(stride=self.stride)
             self.n_samples = int(self.sample_idxs.size)
 
         if self.sample_idxs.size == 0:
             raise ValueError("No valid windows available for the provided dataset configuration.")
 
-    def _build_all_start_positions(self) -> np.ndarray:
-        seq_len = self.input_len + self.target_len
+    def _build_start_positions(self, *, stride: int) -> np.ndarray:
+        """Return every stride-th window start that keeps a window inside its segment."""
         positions = []
         for seg in self.segments:
-            max_start = seg.length - seq_len
+            max_start = seg.length - self.total_seq_len
             if max_start < 0:
                 continue
-            start_values = np.arange(seg.start, seg.start + max_start + 1, dtype=np.int64)
-            positions.append(start_values)
-        if not positions:
-            return np.array([], dtype=np.int64)
-        return np.concatenate(positions).astype(np.int64, copy=False)
-
-    def _build_sequential_start_positions(self) -> np.ndarray:
-        seq_len = self.input_len + self.target_len
-        positions = []
-        for seg in self.segments:
-            max_start = seg.length - seq_len
-            if max_start < 0:
-                continue
-            seg_positions = np.arange(seg.start, seg.start + max_start + 1, self.stride, dtype=np.int64)
+            seg_positions = np.arange(seg.start, seg.start + max_start + 1, stride, dtype=np.int64)
             positions.append(seg_positions)
         if not positions:
             return np.array([], dtype=np.int64)
         return np.concatenate(positions).astype(np.int64, copy=False)
 
     def _build_block_sampled_positions(self, n_samples: int) -> np.ndarray:
-        """Divide available data into n_samples non-overlapping blocks and sample one window per block.
+        """Divide each segment into disjoint blocks and sample one complete window inside each block.
 
-        This ensures IID sampling by guaranteeing no temporal overlap between samples.
-        Block size adapts dynamically to the requested n_samples.
+        Every window, including its target horizon, lies inside its own block, so
+        no two samples share a time step. Block size adapts to the requested
+        n_samples. Non-overlap does not by itself make the samples statistically
+        independent.
         """
         seq_len = self.total_seq_len
         positions = []
@@ -235,23 +224,24 @@ class TSDataset(Dataset):
             remaining_samples -= additional
 
         # Sample from each segment using block-based approach
-        for (seg, usable_length, _), seg_n_samples in zip(segment_info, samples_per_segment):
+        for (seg, _, _), seg_n_samples in zip(segment_info, samples_per_segment):
             if seg_n_samples <= 0:
                 continue
 
-            # Divide usable range into seg_n_samples blocks
-            block_size = usable_length // seg_n_samples
+            # Divide the segment rows into seg_n_samples disjoint blocks. The
+            # capacity cap above keeps every block at least seq_len rows long.
+            block_size = seg.length // seg_n_samples
 
             for i in range(seg_n_samples):
                 block_start = seg.start + i * block_size
-                # Last block extends to end of usable range
+                # Last block extends to the end of the segment
                 if i == seg_n_samples - 1:
-                    block_end = seg.start + usable_length
+                    block_end = seg.start + seg.length
                 else:
                     block_end = block_start + block_size
 
-                # Random position within block
-                pos = self.rng.integers(block_start, block_end)
+                # Random start that keeps the complete window inside the block
+                pos = self.rng.integers(block_start, block_end - seq_len + 1)
                 positions.append(pos)
 
         return np.array(positions, dtype=np.int64)
@@ -415,12 +405,7 @@ class NoisyDataset(Dataset):
         noise_generator: Optional[torch.Generator] = None,
     ):
         self.base_ds = base_ds
-        try:
-            self.noise_std = float(noise_std)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"noise_std must be numeric; got '{noise_std}'.") from exc
-        if self.noise_std < 0:
-            raise ValueError("noise_std must be >= 0.")
+        self.noise_std = parse_required_nonnegative_float(noise_std, key="noise_std")
         self.noise_channels = validate_noise_channels(
             noise_channels,
             key="train_noise_channels",

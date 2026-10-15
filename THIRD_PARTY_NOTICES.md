@@ -77,7 +77,8 @@ SOFTWARE.
 
 - Used by: `models/randomized_smoothing.py`.
 - Reference: Miri Rekavandi et al., 2024.
-- Paper: <https://proceedings.neurips.cc/paper_files/paper/2024/hash/f21a76d688be0553c943a6b6c1d4bb1f-Abstract-Conference.html>
+- Paper:
+  <https://proceedings.neurips.cc/paper_files/paper/2024/hash/f21a76d688be0553c943a6b6c1d4bb1f-Abstract-Conference.html>
 - Repo: <https://github.com/arekavandi/Certified_adv_RRegression>
 - Upstream repository license: no explicit repository license file found.
 - Scope: paper-level algorithm reference.
@@ -141,7 +142,8 @@ SOFTWARE.
 - Repo: <https://github.com/bethgelab/robust-detection-benchmark>
 - Upstream repository license: MIT License.
 - Reference: Taori et al., 2020.
-- Paper: <https://proceedings.neurips.cc/paper/2020/hash/d8330f857a17c53d217014ee776bfd50-Abstract.html>
+- Paper:
+  <https://proceedings.neurips.cc/paper/2020/hash/d8330f857a17c53d217014ee776bfd50-Abstract.html>
 - Repo: <https://github.com/modestyachts/imagenet-testbed>
 - Upstream repository license: MIT License.
 
@@ -165,8 +167,15 @@ SOFTWARE.
 - Repo: <https://github.com/JBrandt97/FaultsToFeatures>
 - Upstream repository license: Creative Commons Attribution-NonCommercial 4.0
   International (CC BY-NC 4.0).
-- Scope: selected perturbation operator semantics only. The
-  `fault_augmentation` training recipe, scheduling, and benchmark method are
+- Scope: failure-mode definitions of the paper, adapted for the operators
+  `linear_drift`, `nonlinear_drift`, `scaling`, `time_varying_scaling`,
+  `trimming_constant`, `trimming_varying`, and `outliers`. These operators
+  implement the failure modes of Brandt et al. (2025) and were written with
+  reference to the upstream implementation in
+  `src/seip_package/utils/sensor_failure_sim.py`. Like the rest of the
+  repository, they are licensed under Apache-2.0. The upstream license above
+  covers the upstream repository.
+  The `fault_augmentation` training recipe, scheduling, and benchmark method are
   repository-owned.
 
 ## Dataset Sources
@@ -198,6 +207,6 @@ default.
   <https://zenodo.org/records/16807304>, DOI
   <https://doi.org/10.5281/zenodo.16807304>. The benchmark uses the v3
   record's WT01-10 SCADA ZIP files for 2016 through 2022, because WT08 is in
-  that file group. Later 2023 and 2024 files in v3 are not part of the frozen
-  benchmark slice. Upstream dataset license: Creative Commons Attribution 4.0
+  that file group. Later 2023 and 2024 files in v3 are not part of the curated
+  dataset. Upstream dataset license: Creative Commons Attribution 4.0
   International (CC BY 4.0).
