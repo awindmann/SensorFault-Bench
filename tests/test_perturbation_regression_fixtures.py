@@ -6,6 +6,13 @@ Any change to operator arithmetic, severity draws, channel selection, or the
 per-sample random streams changes a hash and fails this test. The check uses the
 scenario lists frozen in the fixture, so editing the configured scenarios does
 not affect it.
+
+The scenarios in FLOAT_TOLERANCE_SCENARIOS draw Gaussian values. On CPUs with
+AVX2, `torch.randn` fills large tensors with a vectorized sampler, and elsewhere
+with a scalar one. Both start from the same random bits but round differently,
+so these draws agree across CPU families to float precision, not to the bit.
+Their fixture entries store the perturbed values, which the test compares within
+VALUE_TOLERANCE. Severities and affected channels stay exact for every scenario.
 """
 
 from __future__ import annotations
@@ -33,6 +40,10 @@ TARGET_LEN = 12
 CONTINUOUS_CHANNELS = [0, 1, 2, 3, 4]
 DISCRETE_CHANNELS = [5]
 CHANNEL_FRACTION_MAX = 0.5
+FLOAT_TOLERANCE_SCENARIOS = frozenset({"noise"})
+# Far below any change of severity, channel, or random stream, which moves values
+# by more than 0.01, and far above the rounding differences between CPU families.
+VALUE_TOLERANCE = 1e-5
 
 
 def _fixed_inputs() -> tuple[torch.Tensor, torch.Tensor]:
@@ -75,19 +86,19 @@ def _scenario_payload(scenario_names: list[str]) -> list[dict[str, Any]]:
             context_name="perturbation regression fixture",
             capture_affected_channels=True,
         )
-        payload.append(
-            {
-                "scenario": perturbation.name,
-                "scenario_idx": scenario_idx,
-                "severities": [float(value) for value in severities],
-                "affected_channels": [
-                    [int(channel) for channel in channels] for channels in affected
-                ],
-                "x_sha256": hashlib.sha256(
-                    x_pert.contiguous().numpy().tobytes()
-                ).hexdigest(),
-            }
-        )
+        entry: dict[str, Any] = {
+            "scenario": perturbation.name,
+            "scenario_idx": scenario_idx,
+            "severities": [float(value) for value in severities],
+            "affected_channels": [
+                [int(channel) for channel in channels] for channels in affected
+            ],
+        }
+        if perturbation.name in FLOAT_TOLERANCE_SCENARIOS:
+            entry["x_values"] = x_pert.tolist()
+        else:
+            entry["x_sha256"] = hashlib.sha256(x_pert.contiguous().numpy().tobytes()).hexdigest()
+        payload.append(entry)
     return payload
 
 
@@ -109,7 +120,23 @@ def _load_fixture() -> dict[str, Any]:
         return json.load(handle)
 
 
-def test_scored_and_transfer_perturbations_reproduce_the_fixture_bit_for_bit():
+def _assert_perturbed_inputs_match(observed: dict[str, Any], expected: dict[str, Any]) -> None:
+    scenario = expected["scenario"]
+    if scenario in FLOAT_TOLERANCE_SCENARIOS:
+        assert set(expected) & {"x_values", "x_sha256"} == {"x_values"}, scenario
+        torch.testing.assert_close(
+            torch.tensor(observed["x_values"], dtype=torch.float32),
+            torch.tensor(expected["x_values"], dtype=torch.float32),
+            rtol=VALUE_TOLERANCE,
+            atol=VALUE_TOLERANCE,
+            msg=lambda message: f"{scenario}: {message}",
+        )
+    else:
+        assert set(expected) & {"x_values", "x_sha256"} == {"x_sha256"}, scenario
+        assert observed["x_sha256"] == expected["x_sha256"], scenario
+
+
+def test_scored_and_transfer_perturbations_reproduce_the_fixture():
     fixture = _load_fixture()
     current = compute_fixture_payload(
         [row["scenario"] for row in fixture["scored_scenarios"]],
@@ -128,4 +155,4 @@ def test_scored_and_transfer_perturbations_reproduce_the_fixture_bit_for_bit():
                     observed["severities"], expected["severities"], strict=True
                 )
             ), expected["scenario"]
-            assert observed["x_sha256"] == expected["x_sha256"], expected["scenario"]
+            _assert_perturbed_inputs_match(observed, expected)
