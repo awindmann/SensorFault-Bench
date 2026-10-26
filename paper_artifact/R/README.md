@@ -44,6 +44,8 @@ installation with these command-line tools:
 - `pdflatex`
 - `lualatex`
 - `pdfcrop` for Figure 2
+- `gs` (Ghostscript, which `pdfcrop` also needs) for the bounding box of
+  Figure 2
 
 On Debian or Ubuntu, start with:
 

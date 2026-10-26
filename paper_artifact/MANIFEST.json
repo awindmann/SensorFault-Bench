@@ -734,14 +734,14 @@
       {
         "path": "R/README.md",
         "role": "R figure reproduction subartifact file",
-        "sha256": "d7d66721b4f4ce6cc4932b876ecd6f33dce228f29f07b7cfb97cd08453574b50",
-        "size_bytes": 3875
+        "sha256": "4580413c5a18950cd9648ad52e5613189c233a24ad1a4516a42a7b5ae9452eab",
+        "size_bytes": 3959
       },
       {
         "path": "R/code/Figure_2_backbone_scenario_heatmap.R",
         "role": "R figure reproduction subartifact file",
-        "sha256": "5d933a9eebd73ae6a0aab60032d18b7e75b9f1f3e0c51585e5248d2638d754fb",
-        "size_bytes": 12314
+        "sha256": "40e74327dc6d3c1b602f4a0d8165f20ce1b49284475faca236caab823af22d91",
+        "size_bytes": 13840
       },
       {
         "path": "R/code/Figure_3_forecast_short_term.R",
@@ -848,8 +848,8 @@
       {
         "path": "R/figures/Figure_2_backbone_scenario_heatmap.pdf",
         "role": "R figure reproduction subartifact file",
-        "sha256": "b59204ddcdd4f13705a96a9d90c4b6ee3cc0f14e9495964faadc4f14f55a2680",
-        "size_bytes": 64635
+        "sha256": "066044c4ef87f4c255cb598536d8696d2debde86a679e03bef369424ac8b82d0",
+        "size_bytes": 64765
       },
       {
         "path": "R/figures/Figure_3_forecast_short_term.pdf",

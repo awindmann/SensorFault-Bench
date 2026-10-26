@@ -55,7 +55,7 @@ require_columns <- function(df, required_cols, context) {
   }
 }
 
-compile_tikz_pdf <- function(tex_path) {
+compile_tikz_pdf <- function(tex_path, page_width_bp) {
   old_wd <- getwd()
   tex_dir <- dirname(tex_path)
   tex_file <- basename(tex_path)
@@ -86,10 +86,44 @@ compile_tikz_pdf <- function(tex_path) {
     stop("Expected compiled PDF not found: ", pdf_path, call. = FALSE)
   }
 
+  # Crop only top and bottom: the page keeps its full width (the paper's
+  # \textwidth), so the font sizes set in this script are the printed sizes.
+  bbox_output <- system2(
+    "gs",
+    c("-q", "-dBATCH", "-dNOPAUSE", "-sDEVICE=bbox", basename(pdf_path)),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  bbox_line <- grep("^%%HiResBoundingBox:", bbox_output, value = TRUE)
+  if (length(bbox_line) != 1) {
+    stop(
+      "Could not read the bounding box of ",
+      pdf_path,
+      ":\n",
+      paste(bbox_output, collapse = "\n"),
+      call. = FALSE
+    )
+  }
+  bbox <- as.numeric(
+    strsplit(trimws(sub("^%%HiResBoundingBox:", "", bbox_line)), "\\s+")[[1]]
+  )
+  if (bbox[[1]] < 0 || bbox[[3]] > page_width_bp) {
+    stop(
+      "Figure content extends past the page width in ",
+      pdf_path,
+      call. = FALSE
+    )
+  }
+
   cropped_pdf_file <- sub("\\.pdf$", "_cropped.pdf", basename(pdf_path))
   crop_output <- system2(
     "pdfcrop",
-    c("--margins", "0", basename(pdf_path), cropped_pdf_file),
+    c(
+      "--bbox",
+      shQuote(sprintf("0 %.3f %.3f %.3f", bbox[[2]], page_width_bp, bbox[[4]])),
+      basename(pdf_path),
+      cropped_pdf_file
+    ),
     stdout = TRUE,
     stderr = TRUE
   )
@@ -135,7 +169,7 @@ save_plot <- function(plot, pdf_path, width, height) {
   print(plot)
   dev.off()
 
-  compile_tikz_pdf(tex_path)
+  compile_tikz_pdf(tex_path, page_width_bp = width * 72)
   message("Wrote ", pdf_path)
 }
 
@@ -226,13 +260,13 @@ architecture_order <- c(
   "Chronos2"
 )
 architecture_labels <- c(
-  "SeasonalNaive" = "SNaive",
+  "SeasonalNaive" = "SeasonalNaive",
   "DLinear" = "DLinear",
   "GRU" = "GRU",
-  "ModernTCN" = "ModTCN",
+  "ModernTCN" = "ModernTCN",
   "TSMixer" = "TSMixer",
   "PatchTST" = "PatchTST",
-  "Chronos2" = "Chronos2"
+  "Chronos2" = "Chronos-2"
 )
 scenario_order <- c(
   "drift",
@@ -346,6 +380,14 @@ legend_breaks <- legend_breaks[
   legend_breaks >= fill_limits[[1]] & legend_breaks <= fill_limits[[2]]
 ]
 
+# 2x2 dataset grid sized for the NeurIPS \textwidth (5.5in), so it can be
+# included without rescaling. Tile height/width ratio (1 = square tiles);
+# the figure height follows it.
+tile_ratio <- 0.75
+figure_height <- 1.05 + 3.9 * tile_ratio
+# Shared size for scenario (x) and architecture (y) tick labels.
+tick_text_size <- 7.5
+
 main_plot <- ggplot(
   heatmap_df,
   aes(x = scenario_idx, y = architecture_y, fill = D)
@@ -361,7 +403,7 @@ main_plot <- ggplot(
     family = "serif",
     size = 2.4
   ) +
-  facet_grid(. ~ dataset_display) +
+  facet_wrap(~ dataset_display, nrow = 2) +
   scale_x_continuous(
     breaks = seq_along(scenario_order),
     labels = unname(scenario_labels[scenario_order]),
@@ -383,21 +425,28 @@ main_plot <- ggplot(
     guide = "none"
   ) +
   scale_color_identity(guide = "none") +
-  coord_fixed(ratio = 1, clip = "off") +
+  coord_fixed(ratio = tile_ratio, clip = "off") +
   labs(x = NULL, y = "Architecture") +
   paper_theme() +
   theme(
+    axis.title = element_text(size = 10),
     axis.text.x = element_text(
       angle = 30,
       hjust = 1,
       vjust = 1,
       color = "black",
-      size = 7.1,
+      size = tick_text_size,
       lineheight = 0.82
     ),
-    axis.text.y = element_text(color = "black", size = 9.2),
+    axis.text.y = element_text(color = "black", size = tick_text_size),
     panel.border = element_blank(),
-    strip.text.x = element_text(vjust = 0.5, margin = margin(t = 0, b = 2))
+    strip.text.x = element_text(
+      size = 9,
+      vjust = 0.5,
+      margin = margin(t = 0, b = 2)
+    ),
+    panel.spacing.x = grid::unit(0.4, "lines"),
+    panel.spacing.y = grid::unit(0.5, "lines")
   )
 
 if (fill_limits[[1]] < 1) {
@@ -430,7 +479,7 @@ legend_plot_right <- ggplot() +
     family = "serif",
     hjust = 0.5,
     vjust = 0,
-    size = 4.6
+    size = 3.5
   ) +
   annotate(
     "text",
@@ -439,7 +488,7 @@ legend_plot_right <- ggplot() +
     label = formatC(legend_breaks, format = "f", digits = 1),
     family = "serif",
     hjust = 0,
-    size = 3.4
+    size = 2.8
   ) +
   coord_cartesian(
     xlim = c(0.65, 0.765),
@@ -450,15 +499,15 @@ legend_plot_right <- ggplot() +
   theme_void(base_size = 10, base_family = "serif") +
   theme(
     aspect.ratio = 6,
-    plot.margin = margin(0, 0, 0, -28),
+    plot.margin = margin(0, 0, 0, -16),
     plot.background = element_rect(fill = "white", color = NA)
   )
 
 main_plot_right_legend <- main_plot +
   labs(x = "Scenario") +
   theme(
-    axis.title.x = element_text(size = 11, margin = margin(t = 2)),
-    plot.margin = margin(1, -16, -2, -3)
+    axis.title.x = element_text(margin = margin(t = 2)),
+    plot.margin = margin(1, -12, -2, 1)
   )
 
 legend_column_right <- (
@@ -466,12 +515,17 @@ legend_column_right <- (
     legend_plot_right /
     patchwork::plot_spacer()
 ) +
-  patchwork::plot_layout(heights = c(0.14, 0.66, 0.20))
+  patchwork::plot_layout(heights = c(0.28, 0.44, 0.28))
 
 final_plot_right_legend <- (
   main_plot_right_legend |
     legend_column_right
 ) +
-  patchwork::plot_layout(widths = c(1, 0.045))
+  patchwork::plot_layout(widths = c(1, 0.05))
 
-save_plot(final_plot_right_legend, output_path, width = 7.45, height = 3.0)
+save_plot(
+  final_plot_right_legend,
+  output_path,
+  width = 5.5,
+  height = figure_height
+)
