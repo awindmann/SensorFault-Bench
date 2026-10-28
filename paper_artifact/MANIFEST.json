@@ -758,8 +758,8 @@
       {
         "path": "R/code/Figure_5_trade_off_views.R",
         "role": "R figure reproduction subartifact file",
-        "sha256": "0c6eeffc1937be4dd74dc0fcff1102169a408068d4e9124f33e7d29caeafed09",
-        "size_bytes": 22910
+        "sha256": "022dbec5feeaadef7f8d887e80c4f6bd1378a512123735d2c85a83fce3385b42",
+        "size_bytes": 23212
       },
       {
         "path": "R/code/Figure_6_trajectories.R",
@@ -866,14 +866,14 @@
       {
         "path": "R/figures/Figure_5_backbone_pareto_by_dataset.pdf",
         "role": "R figure reproduction subartifact file",
-        "sha256": "ec6ea3abdc6354c3635935c2ebe8cb614fde3f14c487e31e741a778abd1e7e47",
-        "size_bytes": 55907
+        "sha256": "8ed812d4db70d4bf3cbd2b52af3170da69406ab219ca56be4b661166b96427b2",
+        "size_bytes": 55980
       },
       {
         "path": "R/figures/Figure_5_clean_vs_worst_error_by_dataset.pdf",
         "role": "R figure reproduction subartifact file",
-        "sha256": "5495b4e9742b4b4afa371a39928996ab1c1f0ac1a565da2dcf36cc84439ed1b2",
-        "size_bytes": 47051
+        "sha256": "1de830307ed423320329112c9245e419bc0c3c6e7bd84406292a4a11396cae91",
+        "size_bytes": 47131
       },
       {
         "path": "R/figures/Figure_6_trajectories.pdf",

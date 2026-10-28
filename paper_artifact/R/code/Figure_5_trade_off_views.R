@@ -68,6 +68,16 @@ architecture_palette <- c(
   "Chronos2" = "#999999"
 )
 
+architecture_labels <- c(
+  "SeasonalNaive" = "SeasonalNaive",
+  "DLinear" = "DLinear",
+  "GRU" = "GRU",
+  "ModernTCN" = "ModernTCN",
+  "TSMixer" = "TSMixer",
+  "PatchTST" = "PatchTST",
+  "Chronos2" = "Chronos-2"
+)
+
 backbone_family_map <- c(
   "PatchTST" = "Attention",
   "ModernTCN" = "Convolution",
@@ -413,7 +423,7 @@ backbone_pareto_plot <- ggplot(
   geom_point(aes(shape = baseline_legend_label), size = 3.2) +
   ggrepel::geom_text_repel(
     data = backbone_label_df,
-    aes(label = model),
+    aes(label = unname(architecture_labels[as.character(model)])),
     seed = 42,
     nudge_x = backbone_label_df$label_nudge_x,
     nudge_y = backbone_label_df$label_nudge_y,
@@ -568,7 +578,7 @@ clean_vs_worst_plot <- ggplot(
   geom_point(size = 3.2) +
   ggrepel::geom_text_repel(
     data = clean_vs_label_df,
-    aes(label = model),
+    aes(label = unname(architecture_labels[as.character(model)])),
     seed = 42,
     nudge_x = clean_vs_label_df$label_nudge_x,
     nudge_y = clean_vs_label_df$label_nudge_y,
