@@ -199,13 +199,13 @@ Forecasting architectures:
 | `ModernTCN` | ModernTCN | ✓ | ✓ |
 | `PatchTST` | PatchTST | ✓ | ✓ |
 | `TSMixer` | TSMixer | ✓ | ✓ |
-| `SeasonalNaive` | Seasonal Naive | ✓ | – |
+| `SeasonalNaive` | SeasonalNaive | ✓ | – |
 | `Chronos2` | Chronos-2 | ✓ | – |
 
 All seven architectures enter the architecture comparison in the baseline
 setting. Robustness-improvement methods are compared with their paired baseline
 forecasting models on the five architectures trained on each dataset, so
-Seasonal Naive and Chronos-2 appear in the architecture comparison but not in
+SeasonalNaive and Chronos-2 appear in the architecture comparison but not in
 the method-baseline comparison. Chronos-2 is a pretrained time series
 foundation model and runs zero-shot.
 
@@ -213,7 +213,7 @@ Robustness-improvement methods:
 
 | Key | Method | Kind | Applies to |
 | --- | --- | --- | --- |
-| `baseline` | Baseline | train | DLinear, GRU, ModernTCN, PatchTST, TSMixer, Seasonal Naive, Chronos-2 |
+| `baseline` | Baseline | train | DLinear, GRU, ModernTCN, PatchTST, TSMixer, SeasonalNaive, Chronos-2 |
 | `adversarial_training` | PGD adversarial training | train | DLinear, GRU, ModernTCN, PatchTST, TSMixer |
 | `ensemble` | Ensemble | wrap | DLinear, GRU, ModernTCN, PatchTST, TSMixer |
 | `randomized_training` | Randomized training | train | DLinear, GRU, ModernTCN, PatchTST, TSMixer |
@@ -357,28 +357,28 @@ each quantity and for the method deltas.
 
 | Dataset | Architecture | Clean MSE | Worst-scenario degradation | Worst-scenario fault-time MSE | Worst scenario |
 | --- | --- | ---: | ---: | ---: | --- |
-| Beijing Air Tiantan | Seasonal Naive | 0.353 | 1.353 | 0.477 | Noise |
+| Beijing Air Tiantan | SeasonalNaive | 0.353 | 1.353 | 0.477 | Noise |
 | Beijing Air Tiantan | DLinear | 0.329 | 1.628 | 0.536 | Noise |
 | Beijing Air Tiantan | GRU | 0.281 | 1.251 | 0.352 | Attenuation |
 | Beijing Air Tiantan | ModernTCN | 0.301 | 1.502 | 0.452 | Noise |
 | Beijing Air Tiantan | TSMixer | 0.359 | 1.153 | 0.414 | Attenuation |
 | Beijing Air Tiantan | PatchTST | 0.338 | 1.376 | 0.465 | Noise |
 | Beijing Air Tiantan | Chronos-2 | 0.349 | 1.230 | 0.429 | StuckSensor |
-| Penmanshiel WT08 | Seasonal Naive | 0.389 | 1.320 | 0.514 | Noise |
+| Penmanshiel WT08 | SeasonalNaive | 0.389 | 1.320 | 0.514 | Noise |
 | Penmanshiel WT08 | DLinear | 0.340 | 1.259 | 0.428 | Noise |
 | Penmanshiel WT08 | GRU | 0.346 | 1.064 | 0.368 | Drift |
 | Penmanshiel WT08 | ModernTCN | 0.336 | 1.183 | 0.397 | Noise |
 | Penmanshiel WT08 | TSMixer | 0.353 | 1.256 | 0.443 | Noise |
 | Penmanshiel WT08 | PatchTST | 0.354 | 1.202 | 0.426 | Drift |
 | Penmanshiel WT08 | Chronos-2 | 0.401 | 1.160 | 0.466 | Drift |
-| ETTh1 | Seasonal Naive | 0.634 | 1.288 | 0.817 | MissingData |
+| ETTh1 | SeasonalNaive | 0.634 | 1.288 | 0.817 | MissingData |
 | ETTh1 | DLinear | 0.438 | 1.251 | 0.548 | StuckSensor |
 | ETTh1 | GRU | 0.664 | 1.064 | 0.707 | MissingData |
 | ETTh1 | ModernTCN | 0.462 | 1.216 | 0.562 | StuckSensor |
 | ETTh1 | TSMixer | 0.475 | 1.169 | 0.555 | StuckSensor |
 | ETTh1 | PatchTST | 0.431 | 1.312 | 0.566 | StuckSensor |
 | ETTh1 | Chronos-2 | 0.496 | 1.448 | 0.718 | StuckSensor |
-| Traffic | Seasonal Naive | 1.270 | 1.210 | 1.537 | MissingData |
+| Traffic | SeasonalNaive | 1.270 | 1.210 | 1.537 | MissingData |
 | Traffic | DLinear | 0.684 | 1.177 | 0.806 | MissingData |
 | Traffic | GRU | 0.726 | 1.284 | 0.932 | MissingData |
 | Traffic | ModernTCN | 0.575 | 1.265 | 0.728 | MissingData |
