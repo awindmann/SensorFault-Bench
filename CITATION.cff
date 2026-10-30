@@ -27,21 +27,27 @@ authors:
   - family-names: Windmann
     given-names: Alexander
     affiliation: Helmut Schmidt University
+    orcid: "https://orcid.org/0000-0002-6522-4262"
   - family-names: Wittenberg
     given-names: Philipp
     affiliation: Helmut Schmidt University
+    orcid: "https://orcid.org/0000-0001-7151-8243"
   - family-names: Manca
     given-names: Gianluca
     affiliation: Ruhr University Bochum
+    orcid: "https://orcid.org/0000-0001-5951-8590"
   - family-names: Dix
     given-names: Marcel
     affiliation: ABB Corporate Research
+    orcid: "https://orcid.org/0000-0001-5984-6594"
   - family-names: Brandt
     given-names: Jens U.
     affiliation: TH Köln, Leiden University
+    orcid: "https://orcid.org/0009-0001-9713-8158"
   - family-names: Niggemann
     given-names: Oliver
     affiliation: Helmut Schmidt University
+    orcid: "https://orcid.org/0000-0001-8747-3596"
 preferred-citation:
   type: conference-paper
   title: "Benchmarking Sensor-Fault Robustness in Forecasting"
