@@ -71,11 +71,17 @@ def test_croissant_metadata_matches_curated_records_and_cites_the_paper():
     )
     for key, path in CROISSANT_FILES.items():
         metadata = json.loads((REPO_ROOT / path).read_text(encoding="utf-8"))
-        record_url, _, version = metadata["url"].partition("/versions/")
+        record_id = metadata["url"].removeprefix("https://zenodo.org/records/")
         guide_entry = guide.split(f"- `{key}`:", 1)[1].split("\n- ", 1)[0]
+        parquet = next(
+            entry for entry in metadata["distribution"] if entry["name"] == DATASET_REGISTRY.get(key).path
+        )
 
-        assert record_url in guide_entry, path
-        assert version == str(metadata["version"]), path
+        assert record_id.isdigit(), path
+        assert metadata["sameAs"] == f"https://doi.org/10.5281/zenodo.{record_id}", path
+        assert f"<{metadata['sameAs']}>" in guide_entry, path
+        assert parquet["contentUrl"] in guide, path
+        assert metadata["conformsTo"] == "http://mlcommons.org/croissant/1.1", path
         assert metadata["license"]["name"] == "CC BY-SA 4.0", path
         assert metadata["dct:conformsTo"] == "http://mlcommons.org/croissant/RAI/1.0", path
         for field in RAI_FIELDS:
@@ -112,8 +118,8 @@ def test_data_guide_lists_benchmark_filenames_and_validation_surface():
         "dataframe-content SHA256",
         "file-byte fixity",
         "scripts/generate_dataset_checksums.py",
-        "https://www.kaggle.com/datasets/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset",
-        "https://www.kaggle.com/datasets/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset",
+        "https://doi.org/10.5281/zenodo.23797045",
+        "https://doi.org/10.5281/zenodo.23797057",
     ):
         assert required_phrase in guide
 

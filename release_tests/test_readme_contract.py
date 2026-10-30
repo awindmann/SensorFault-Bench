@@ -315,16 +315,16 @@ def test_download_commands_fetch_the_registered_dataset_files():
     readme = _readme()
     data_guide = (REPO_ROOT / "data/README.md").read_text(encoding="utf-8")
     record_links = dict(
-        re.findall(r"`(\w+)`:\s+<https://www\.kaggle\.com/datasets/(sensorfaultbench/[\w-]+)>", data_guide)
+        re.findall(r"`(\w+)`:\s+<(https://doi\.org/10\.5281/zenodo\.\d+)>", data_guide)
     )
 
     etth1_path = f"{data_root}/{DATASET_REGISTRY.get('ETTh1').path}"
     assert f"curl -L -o {etth1_path} https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv" in readme
     assert f"--output {etth1_path} --validate-existing" in readme
     assert set(record_links) == {"BeijingAir_Tiantan", "Penmanshiel_Hourly_WT08"}
-    for key, slug in record_links.items():
+    for key, record_link in record_links.items():
         filename = DATASET_REGISTRY.get(key).path
-        archive = f"{Path(filename).stem}.zip"
-        assert f"curl -L -o {archive} https://www.kaggle.com/api/v1/datasets/download/{slug}" in data_guide
-        assert f"unzip -j {archive} {filename} -d {data_root}" in data_guide
-        assert f"https://www.kaggle.com/datasets/{slug}" in readme
+        record_id = record_link.rsplit(".", 1)[1]
+        download = f"curl -L -o {data_root}/{filename} https://zenodo.org/records/{record_id}/files/{filename}\n"
+        assert download in data_guide, key
+        assert record_link in readme
