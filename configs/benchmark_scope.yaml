@@ -34,7 +34,7 @@ architectures:
     ModernTCN: "ModernTCN"
     PatchTST: "PatchTST"
     TSMixer: "TSMixer"
-    SeasonalNaive: "Seasonal Naive"
+    SeasonalNaive: "SeasonalNaive"
     Chronos2: "Chronos-2"
   roles:
     method_comparison:
