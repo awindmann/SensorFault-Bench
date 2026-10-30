@@ -303,7 +303,7 @@ The paper corresponds to release
 of this repository. [`paper_artifact/README.md`](paper_artifact/README.md) maps
 each section of the paper to its bundled results, the commands that reproduce
 them, and the compute accounting of its experiments. The default configuration,
-which Table 22 of the paper specifies, runs with:
+which Table 21 of the paper specifies, runs with:
 
 ```bash
 uv run python run_training.py
@@ -340,7 +340,7 @@ The baseline forecasting models were selected on clean validation data with
 training and search seed 42 and evaluated on 10,000 sampled test windows per
 dataset. Lower is better for every quantity. Table 4 of the
 [paper](https://neurips.cc/virtual/2026/loc/paris/poster/138912) reports these
-results together with the method deltas below. Its Appendix Tables 25 and 26
+results together with the method deltas below. Its Appendix Tables 24 and 25
 add 95% percentile bootstrap intervals for the two leading architectures of
 each quantity and for the method deltas.
 
