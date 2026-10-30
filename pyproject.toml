@@ -1,6 +1,6 @@
 [project]
 name = "sensorfault-bench"
-version = "1.0.0"
+version = "1.0.1"
 description = "Robustness evaluation of time series forecasting under sensor faults in cyber-physical systems."
 readme = "README.md"
 license = "Apache-2.0"

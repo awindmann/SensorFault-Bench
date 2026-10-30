@@ -69,6 +69,18 @@ LEAKAGE_RULES = {
         ),
     },
 }
+# The published file was built with pandas on Apple Silicon, whose CSV float
+# parser accumulates up to 17 digits with one fused multiply-add per digit and
+# then scales by a power of ten. Builds without fused multiply-adds round each
+# digit step twice. Integer arithmetic reproduces the published parse on every
+# platform.
+PARSER_MAX_DIGITS = 17
+POWERS_OF_TEN = np.array([float(f"1e{power}") for power in range(309)])
+FLOAT_TOKEN_PATTERN = (
+    r"(?a)^\s*(?P<sign>[+-]?)(?P<integer>\d*)(?:\.(?P<fraction>\d*))?"
+    r"(?:[eE](?P<exponent>[+-]?\d{1,17}))?\s*$"
+)
+INFINITY_TOKEN_PATTERN = r"(?i)[+-]?inf(?:inity)?"
 
 
 def _registered_channels() -> list[str]:
@@ -129,6 +141,70 @@ def _extract_header_from_greenbyte_csv(
     raise ValueError(f"Missing Greenbyte header row in {csv_name}.")
 
 
+def parse_scada_column(tokens: pd.Series) -> pd.Series | None:
+    """Parse raw SCADA text as the published build did, or return None for text."""
+    present = tokens.notna().to_numpy()
+    infinite = np.zeros(len(tokens), dtype=bool)
+    infinite[present] = tokens[present].str.fullmatch(INFINITY_TOKEN_PATTERN).to_numpy()
+    numeric = present & ~infinite
+    parts = tokens[numeric].str.extract(FLOAT_TOKEN_PATTERN)
+    if parts["integer"].isna().any():
+        return None
+    digits = (parts["integer"] + parts["fraction"].fillna("")).str.slice(
+        0, PARSER_MAX_DIGITS
+    )
+    digit_count = digits.str.len().to_numpy()
+    if (digit_count == 0).any():
+        return None
+    # A complete column of integers keeps exact integer values.
+    if present.all() and not infinite.any():
+        if parts["fraction"].isna().all() and parts["exponent"].isna().all():
+            integers = np.array([int(token) for token in tokens], dtype=np.int64)
+            return pd.Series(integers, index=tokens.index, name=tokens.name)
+    integer_count = parts["integer"].str.len().to_numpy()
+    used_integer_count = np.minimum(integer_count, PARSER_MAX_DIGITS)
+    exponent = (
+        parts["exponent"].fillna("0").astype(np.int64).to_numpy()
+        + (integer_count - used_integer_count)
+        - (digit_count - used_integer_count)
+    )
+    # The parser reports a range error for such values and keeps the column as text.
+    if (exponent > 308).any():
+        return None
+    digit_codes = np.array(digits.tolist(), dtype=f"U{PARSER_MAX_DIGITS}")
+    digit_values = (
+        digit_codes.view(np.uint32).reshape(-1, PARSER_MAX_DIGITS).astype(np.int64)
+        - ord("0")
+    )
+    number = np.zeros(len(digits), dtype=np.int64)
+    for position in range(PARSER_MAX_DIGITS):
+        active = position < digit_count
+        # One rounding per digit step, as with a fused multiply-add.
+        number[active] = (
+            (number[active] * 10 + digit_values[active, position])
+            .astype(np.float64)
+            .astype(np.int64)
+        )
+    values = number.astype(np.float64)
+    values[(parts["sign"] == "-").to_numpy()] *= -1.0
+    scale_up = exponent > 0
+    scale_down = (exponent <= 0) & (exponent >= -308)
+    subnormal = (exponent < -308) & (exponent >= -616)
+    with np.errstate(over="ignore"):
+        values[scale_up] *= POWERS_OF_TEN[exponent[scale_up]]
+    values[scale_down] /= POWERS_OF_TEN[-exponent[scale_down]]
+    values[subnormal] = (
+        values[subnormal] / POWERS_OF_TEN[-308 - exponent[subnormal]] / POWERS_OF_TEN[308]
+    )
+    values[exponent < -616] = 0.0
+    if np.isinf(values).any():
+        return None
+    parsed = np.full(len(tokens), np.nan)
+    parsed[numeric] = values
+    parsed[infinite] = np.where(tokens[infinite].str.startswith("-"), -np.inf, np.inf)
+    return pd.Series(parsed, index=tokens.index, name=tokens.name)
+
+
 def _load_turbine_data_from_zip(zip_path: Path) -> list[pd.DataFrame]:
     dataframes = []
     with zipfile.ZipFile(zip_path, "r") as archive:
@@ -154,19 +230,21 @@ def _load_turbine_data_from_zip(zip_path: Path) -> list[pd.DataFrame]:
                     skipinitialspace=True,
                     parse_dates=[header[0]],
                     na_values=["NULL", "null", "NaN", "nan", ""],
+                    dtype={column: str for column in header[1:]},
                 )
             if frame.empty:
                 continue
             timestamp_col = frame.columns[0]
+            parsed_columns = {
+                column: parse_scada_column(frame[column]) for column in frame.columns[1:]
+            }
             non_numeric = [
-                column
-                for column in frame.select_dtypes(include=["object"]).columns
-                if column != timestamp_col
+                column for column, values in parsed_columns.items() if values is None
             ]
             if non_numeric:
                 frame = frame.drop(columns=non_numeric)
             for column in frame.columns[1:]:
-                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+                frame[column] = parsed_columns[column]
             frame = frame[frame[timestamp_col].notna()]
             dataframes.append(frame)
     if not dataframes:

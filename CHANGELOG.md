@@ -3,6 +3,30 @@
 All notable changes to SensorFault-Bench are recorded here. Version numbers
 follow [semantic versioning](https://semver.org/).
 
+## 1.0.1
+
+Patch release that makes dataset parsing and scoring independent of the
+platform. All results in the paper and the paper artifact remain valid, since
+the datasets and every reported value are unchanged.
+
+### Fixed
+
+- Validation with `--require-checksums` accepts the downloaded `ETTh1.csv` on
+  every platform. Every dataset CSV file is now parsed with correct rounding,
+  whereas the default pandas parser rounds long decimals differently from
+  platform to platform. This changes the recorded content checksum of ETTh1
+  but not the values that models train on.
+- `scripts/preprocess_penmanshiel_hourly_wt08.py` reproduces the published
+  `penmanshiel_hourly_wt08.parquet` on every platform, so a rebuild from the
+  raw SCADA files passes `--require-checksums`. Previously, the rebuilt values
+  depended on the platform.
+- Analysis and the fixed-channel-fraction evaluation read the logged per-sample
+  errors exactly as written. Before, the last digit of full-precision outputs
+  could differ between platforms, while reported values were not affected.
+- A Git checkout on Windows keeps the committed bytes of `paper_artifact/` and
+  `configs/baseline_hparams.yaml`, so these files match the checksums that the
+  manifests in `paper_artifact/` record.
+
 ## 1.0.0
 
 Camera-ready release for the NeurIPS 2026 Evaluations & Datasets Track paper

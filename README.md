@@ -5,7 +5,7 @@ NeurIPS 2026 · Evaluations &amp; Datasets Track</p>
 
 <p align="center">
 <a href="https://neurips.cc/virtual/2026/loc/paris/poster/138912"><img alt="Paper at NeurIPS 2026" src="https://img.shields.io/badge/paper-NeurIPS%202026-8c1b13"></a>
-<a href="CHANGELOG.md"><img alt="Release v1.0.0" src="https://img.shields.io/badge/release-v1.0.0-6f42c1"></a>
+<a href="CHANGELOG.md"><img alt="Release v1.0.1" src="https://img.shields.io/badge/release-v1.0.1-6f42c1"></a>
 <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 <img alt="Python 3.10 to 3.12" src="https://img.shields.io/badge/python-3.10%20to%203.12-3776ab">
 <a href="https://github.com/awindmann/SensorFault-Bench/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/awindmann/SensorFault-Bench/actions/workflows/tests.yml/badge.svg"></a>
@@ -300,10 +300,14 @@ below run the same workflow from the command line.
 
 The paper corresponds to release
 [v1.0.0](https://github.com/awindmann/SensorFault-Bench/releases/tag/v1.0.0)
-of this repository. [`paper_artifact/README.md`](paper_artifact/README.md) maps
-each section of the paper to its bundled results, the commands that reproduce
-them, and the compute accounting of its experiments. The default configuration,
-which Table 21 of the paper specifies, runs with:
+of this repository. Release
+[v1.0.1](https://github.com/awindmann/SensorFault-Bench/releases/tag/v1.0.1)
+reproduces the same results. It makes dataset parsing and scoring independent
+of the platform.
+[`paper_artifact/README.md`](paper_artifact/README.md) maps each section of the
+paper to its bundled results, the commands that reproduce them, and the compute
+accounting of its experiments. The default configuration, which Table 21 of the
+paper specifies, runs with:
 
 ```bash
 uv run python run_training.py

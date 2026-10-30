@@ -98,3 +98,9 @@ A dataset proposed as part of the benchmark also needs:
   [`configs/defaults.yaml`](../configs/defaults.yaml)
 - display metadata in
   [`configs/benchmark_scope.yaml`](../configs/benchmark_scope.yaml)
+
+If the dataset needs a preprocessing script, the script reads raw CSV files
+with `read_csv_correctly_rounded` from
+[`utils/parsing.py`](../utils/parsing.py). This reader rounds every value
+correctly, so the processed values and their content checksum are the same on
+every platform.

@@ -16,6 +16,7 @@ from utils.parsing import (
     build_noise_channel_mask,
     parse_required_nonnegative_float,
     parse_train_perturbation_probability,
+    read_csv_correctly_rounded,
     validate_input_stats,
     validate_noise_channels,
 )
@@ -72,7 +73,7 @@ class TSDataset(Dataset):
             if file_path.endswith(".parquet"):
                 self.df = pd.read_parquet(file_path)
             elif file_path.endswith(".csv"):
-                self.df = pd.read_csv(file_path)
+                self.df = read_csv_correctly_rounded(file_path)
             else:
                 raise ValueError("File format not supported.")
             try:  # Try to convert the first column to datetime. If not possible, ignore it.

@@ -23,6 +23,7 @@ from utils.parsing import (
     parse_perturbation_channel_fraction_max,
     parse_required_nonnegative_int,
     parse_required_positive_int,
+    read_csv_correctly_rounded,
     require_dataframe_columns,
     require_integer_series,
     require_tag_value_with_optional_param_match,
@@ -1838,7 +1839,7 @@ def download_validated_degradation_artifact_bundle(
                     f"{artifact_name!r} from run {run_id}: {artifact_path}."
                 ) from exc
             try:
-                loaded_frames[artifact_name] = pd.read_csv(local_path)
+                loaded_frames[artifact_name] = read_csv_correctly_rounded(local_path)
             except Exception as exc:
                 raise ValueError(
                     f"{context_name} could not read downloaded artifact "
@@ -1922,7 +1923,7 @@ def download_validated_fixed_channel_fraction_artifact_bundle(
                         raise ValueError("context.json must contain a JSON object.")
                     context_payload = loaded_context
                 else:
-                    loaded_frames[artifact_name] = pd.read_csv(local_path)
+                    loaded_frames[artifact_name] = read_csv_correctly_rounded(local_path)
             except Exception as exc:
                 raise ValueError(
                     f"{context_name} could not read downloaded artifact "

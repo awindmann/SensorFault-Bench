@@ -13,7 +13,7 @@ abstract: >-
   sensor faults on real input histories. It reports worst-scenario
   degradation, clean mean squared error, and worst-scenario fault-time mean
   squared error.
-version: "1.0.0"
+version: "1.0.1"
 license: Apache-2.0
 repository-code: "https://github.com/awindmann/SensorFault-Bench"
 url: "https://github.com/awindmann/SensorFault-Bench"

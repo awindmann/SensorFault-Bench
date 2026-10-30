@@ -33,6 +33,7 @@ FORBIDDEN_DEPENDENCY_MANIFEST_FILENAMES = {
     "setup.py",
 }
 ALLOWED_ROOT_FILES = {
+    ".gitattributes",
     ".gitignore",
     ".python-version",
     "CHANGELOG.md",

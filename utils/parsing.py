@@ -121,6 +121,16 @@ def join_data_root_path(
     return (Path(root) / path).as_posix()
 
 
+def read_csv_correctly_rounded(source: Any, **kwargs: Any) -> pd.DataFrame:
+    """Read a CSV file with correctly rounded float parsing.
+
+    The default pandas parser rounds the last bit of long decimals differently
+    on different platforms. Datasets and scoring artifacts therefore go through
+    this reader, which returns exactly the values that were written.
+    """
+    return pd.read_csv(source, float_precision="round_trip", **kwargs)
+
+
 def robustness_results_complete_tag_value(*, complete: bool) -> str:
     """Render the degradation-results completeness tag value."""
     return "true" if complete else "false"

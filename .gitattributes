@@ -1,0 +1,8 @@
+# Git stores text files with LF line endings.
+* text=auto
+
+# The manifests in paper_artifact/ record the checksums of the bundled files and
+# of configs/baseline_hparams.yaml, so Git checks these files out with their
+# committed bytes on every platform.
+paper_artifact/** -text
+configs/baseline_hparams.yaml text eol=lf
