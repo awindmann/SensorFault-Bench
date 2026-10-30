@@ -40,6 +40,10 @@ rules, and scoring.
 - The README is restructured around the key findings, the results of the
   default configuration, and a guide to evaluating a new model or method.
   `data/README.md` adds download commands for the two curated datasets.
+- The two curated datasets are published as Zenodo records with Croissant 1.1
+  metadata, from which `data/README.md` downloads them. Their Parquet and CSV
+  files are byte-identical to version 2 of the Kaggle records of the review
+  period.
 - The paper artifact is version 2,
   `sensorfault-bench-neurips2026-paper-artifact-v2`.
 - The folders in `paper_artifact/tables/` carry the name of their evaluated

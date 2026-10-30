@@ -9,17 +9,15 @@ processed dataset files.
 The commands below place the four benchmark files under the default
 `DATA_ROOT`. ETTh1 and Traffic come from their public sources, with Traffic
 converted to the benchmark Parquet file. The two curated datasets come from
-their Kaggle records, which need no Kaggle account.
+their Zenodo records.
 
 ```bash
 mkdir -p data/processed data/raw
 curl -L -o data/processed/ETTh1.csv https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv
 curl -L -o data/raw/traffic.csv https://huggingface.co/datasets/thuml/Time-Series-Library/resolve/main/traffic/traffic.csv
 uv run python scripts/preprocess_traffic.py --raw-source data/raw/traffic.csv --output data/processed/traffic.parquet
-curl -L -o beijing_air_tiantan.zip https://www.kaggle.com/api/v1/datasets/download/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset
-unzip -j beijing_air_tiantan.zip beijing_air_tiantan.parquet -d data/processed
-curl -L -o penmanshiel_hourly_wt08.zip https://www.kaggle.com/api/v1/datasets/download/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset
-unzip -j penmanshiel_hourly_wt08.zip penmanshiel_hourly_wt08.parquet -d data/processed
+curl -L -o data/processed/beijing_air_tiantan.parquet https://zenodo.org/records/23797045/files/beijing_air_tiantan.parquet
+curl -L -o data/processed/penmanshiel_hourly_wt08.parquet https://zenodo.org/records/23797057/files/penmanshiel_hourly_wt08.parquet
 ```
 
 Then validate the four files. With `--require-checksums`, validation also
@@ -91,17 +89,19 @@ preprocessing scripts in
 [Benchmark Dataset Validation](#benchmark-dataset-validation).
 
 The commands under [Download](#download) fetch and validate the processed
-records of the two curated single-target datasets, which are published
-separately on Kaggle:
+files of the two curated single-target datasets, which are published
+separately on Zenodo:
 
 - `BeijingAir_Tiantan`:
-  <https://www.kaggle.com/datasets/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset>
+  <https://doi.org/10.5281/zenodo.23797045>
 - `Penmanshiel_Hourly_WT08`:
-  <https://www.kaggle.com/datasets/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset>
+  <https://doi.org/10.5281/zenodo.23797057>
 
-The Croissant metadata of both records is in [`croissant/`](croissant/). It
-includes the Responsible AI fields, which the Croissant export of Kaggle leaves
-out.
+Both links name version 1.0.0 of the records, which the download commands
+fetch. Each record also holds a CSV mirror, a checksum manifest, and its
+Croissant metadata. [`croissant/`](croissant/) holds copies of the two
+Croissant files. The Parquet and CSV files are byte-identical to version 2 of
+the earlier Kaggle records.
 
 Both records are licensed under CC BY-SA 4.0, whereas their upstream sources
 keep their own terms, which are listed below.

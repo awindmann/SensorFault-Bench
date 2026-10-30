@@ -2,21 +2,31 @@
   "@context": {
     "@language": "en",
     "@vocab": "https://schema.org/",
+    "arrayShape": "cr:arrayShape",
     "citeAs": "cr:citeAs",
     "column": "cr:column",
     "conformsTo": "dct:conformsTo",
+    "containedIn": "cr:containedIn",
     "cr": "http://mlcommons.org/croissant/",
+    "rai": "http://mlcommons.org/croissant/RAI/",
+    "prov": "http://www.w3.org/ns/prov#",
     "data": {
       "@id": "cr:data",
       "@type": "@json"
     },
-    "dataBiases": "cr:dataBiases",
-    "dataCollection": "cr:dataCollection",
     "dataType": {
       "@id": "cr:dataType",
       "@type": "@vocab"
     },
     "dct": "http://purl.org/dc/terms/",
+    "description": {
+      "@container": "@language"
+    },
+    "equivalentProperty": "cr:equivalentProperty",
+    "examples": {
+      "@id": "cr:examples",
+      "@type": "@json"
+    },
     "extract": "cr:extract",
     "field": "cr:field",
     "fileProperty": "cr:fileProperty",
@@ -24,89 +34,182 @@
     "fileSet": "cr:fileSet",
     "format": "cr:format",
     "includes": "cr:includes",
-    "isEnumeration": "cr:isEnumeration",
+    "isArray": "cr:isArray",
     "isLiveDataset": "cr:isLiveDataset",
     "jsonPath": "cr:jsonPath",
     "key": "cr:key",
     "md5": "cr:md5",
+    "name": {
+      "@container": "@language"
+    },
     "parentField": "cr:parentField",
     "path": "cr:path",
-    "personalSensitiveInformation": "cr:personalSensitiveInformation",
     "recordSet": "cr:recordSet",
     "references": "cr:references",
     "regex": "cr:regex",
     "repeated": "cr:repeated",
     "replace": "cr:replace",
+    "samplingRate": "cr:samplingRate",
     "sc": "https://schema.org/",
     "separator": "cr:separator",
     "source": "cr:source",
     "subField": "cr:subField",
-    "transform": "cr:transform",
-    "wd": "https://www.wikidata.org/wiki/",
-    "rai": "http://mlcommons.org/croissant/RAI/",
-    "prov": "http://www.w3.org/ns/prov#"
+    "transform": "cr:transform"
   },
-  "alternateName": "",
-  "conformsTo": "http://mlcommons.org/croissant/1.0",
+  "@type": "sc:Dataset",
+  "conformsTo": "http://mlcommons.org/croissant/1.1",
+  "dct:conformsTo": "http://mlcommons.org/croissant/RAI/1.0",
+  "name": "Penmanshiel WT08 Hourly SCADA Time Series Dataset",
+  "description": "Derived hourly SCADA time series dataset for turbine WT08 from the Penmanshiel wind farm data collection on Zenodo. Source: https://zenodo.org/records/16807304. The record contains a canonical Parquet benchmark file and CSV mirror for forecasting and sensor-fault robustness evaluation. It uses raw WT08 SCADA, removes leakage-prone channels, selects the longest target-continuous segment, aggregates complete hourly bins from six 10-minute rows, and uses Power (kW) as the downstream forecast target.",
+  "url": "https://zenodo.org/records/23797057",
+  "sameAs": "https://doi.org/10.5281/zenodo.23797057",
+  "version": "1.0.0",
+  "datePublished": "2026-10-30",
   "license": {
     "@type": "sc:CreativeWork",
     "name": "CC BY-SA 4.0",
     "url": "https://creativecommons.org/licenses/by-sa/4.0/"
   },
+  "isAccessibleForFree": true,
+  "creator": [
+    {
+      "@type": "sc:Person",
+      "name": "Alexander Windmann",
+      "givenName": "Alexander",
+      "familyName": "Windmann",
+      "affiliation": {
+        "@type": "sc:Organization",
+        "name": "Helmut Schmidt University"
+      },
+      "sameAs": "https://orcid.org/0000-0002-6522-4262"
+    },
+    {
+      "@type": "sc:Person",
+      "name": "Philipp Wittenberg",
+      "givenName": "Philipp",
+      "familyName": "Wittenberg",
+      "affiliation": {
+        "@type": "sc:Organization",
+        "name": "Helmut Schmidt University"
+      },
+      "sameAs": "https://orcid.org/0000-0001-7151-8243"
+    },
+    {
+      "@type": "sc:Person",
+      "name": "Gianluca Manca",
+      "givenName": "Gianluca",
+      "familyName": "Manca",
+      "affiliation": {
+        "@type": "sc:Organization",
+        "name": "Ruhr University Bochum"
+      },
+      "sameAs": "https://orcid.org/0000-0001-5951-8590"
+    },
+    {
+      "@type": "sc:Person",
+      "name": "Marcel Dix",
+      "givenName": "Marcel",
+      "familyName": "Dix",
+      "affiliation": {
+        "@type": "sc:Organization",
+        "name": "ABB Corporate Research"
+      },
+      "sameAs": "https://orcid.org/0000-0001-5984-6594"
+    },
+    {
+      "@type": "sc:Person",
+      "name": "Jens U. Brandt",
+      "givenName": "Jens U.",
+      "familyName": "Brandt",
+      "affiliation": [
+        {
+          "@type": "sc:Organization",
+          "name": "TH Köln"
+        },
+        {
+          "@type": "sc:Organization",
+          "name": "Leiden University"
+        }
+      ],
+      "sameAs": "https://orcid.org/0009-0001-9713-8158"
+    },
+    {
+      "@type": "sc:Person",
+      "name": "Oliver Niggemann",
+      "givenName": "Oliver",
+      "familyName": "Niggemann",
+      "affiliation": {
+        "@type": "sc:Organization",
+        "name": "Helmut Schmidt University"
+      },
+      "sameAs": "https://orcid.org/0000-0001-8747-3596"
+    }
+  ],
+  "publisher": {
+    "@type": "sc:Organization",
+    "name": "Zenodo",
+    "url": "https://zenodo.org"
+  },
+  "keywords": [
+    "time series forecasting",
+    "sensor faults",
+    "robustness benchmark",
+    "cyber-physical systems",
+    "wind turbine",
+    "SCADA",
+    "wind energy"
+  ],
+  "temporalCoverage": "2016-08-18T15:00:00/2019-08-01T09:00:00",
+  "spatialCoverage": "Penmanshiel wind farm, United Kingdom",
+  "citeAs": "@inproceedings{windmann2026benchmarking,\n  title={Benchmarking Sensor-Fault Robustness in Forecasting},\n  author={Windmann, Alexander and Wittenberg, Philipp and Manca, Gianluca and Dix, Marcel and Brandt, Jens U. and Niggemann, Oliver},\n  booktitle={The Fortieth Annual Conference on Neural Information Processing Systems Evaluations and Datasets Track},\n  year={2026},\n  url={https://neurips.cc/virtual/2026/loc/paris/poster/138912}\n}",
+  "rai:dataLimitations": "Single-turbine WT08 subset from one wind farm, not a fleet-wide or universal wind-energy dataset. Hourly aggregation and channel pruning remove information from the raw 10-minute SCADA source. The dataset is not recommended for safety certification, operational control, maintenance scheduling, asset valuation, or deployment without site-specific validation.",
+  "rai:dataBiases": "The dataset has turbine, site, and retained-segment selection bias. Dropping leakage-prone channels, dropping long-gap channels, and selecting one target-continuous segment may remove variables or periods associated with outages or operating states. Hourly averaging smooths short transients and may underrepresent fast operational changes.",
+  "rai:personalSensitiveInformation": "No personal or human-subject records are included. The data describe turbine SCADA measurements.",
+  "rai:dataUseCases": "The dataset is intended for reproducible time series forecasting experiments and sensor-fault robustness benchmarking under the accompanying benchmark protocol. The packaged files do not include sensor-fault labels, corrupted samples, or faulted samples because sensor-fault scenarios are generated by the benchmark code during evaluation. It is not validated for turbine control, maintenance, safety, financial, or operational decision-making.",
+  "rai:dataSocialImpact": "Positive use is transparent benchmarking on renewable-energy SCADA data. The main risk is mistaking a benchmark slice for operationally certified performance evidence.",
+  "rai:hasSyntheticData": false,
+  "prov:wasDerivedFrom": "https://zenodo.org/records/16807304",
+  "prov:wasGeneratedBy": "Derived from WT08 raw SCADA exports covering 2016 through 2022 by using raw WT08 SCADA only, removing cumulative energy counters, availability or contractual indices, controller expectations, and power-curve helper columns, splitting at Power (kW) gaps longer than one day, selecting the longest target-continuous segment, dropping non-target channels with kept-segment gaps longer than 21 days, forward-filling shorter gaps only inside the retained segment, aggregating complete hourly bins from six 10-minute rows, applying no backward fill, exporting the canonical Parquet file, and packaging it with a CSV mirror and SHA256 checksum manifest.",
   "distribution": [
     {
-      "contentUrl": "https://www.kaggle.com/api/v1/datasets/download/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset?datasetVersionNumber=2",
-      "contentSize": "22.133 MB",
-      "md5": "W1d/kXyWEgChJVQt5rEGtA==",
-      "encodingFormat": "application/zip",
-      "@id": "archive.zip",
       "@type": "cr:FileObject",
-      "name": "archive.zip",
-      "description": "Archive containing all the contents of the Penmanshiel WT08 Hourly SCADA Time Series Dataset dataset"
-    },
-    {
-      "contentUrl": "penmanshiel_hourly_wt08.csv",
-      "containedIn": {
-        "@id": "archive.zip"
-      },
-      "encodingFormat": "text/csv",
-      "@id": "penmanshiel_hourly_wt08.csv_fileobject",
-      "@type": "cr:FileObject",
-      "name": "penmanshiel_hourly_wt08.csv",
-      "description": "CSV mirror of the canonical Penmanshiel WT08 Parquet table."
-    },
-    {
-      "contentUrl": "penmanshiel_hourly_wt08.parquet",
-      "containedIn": {
-        "@id": "archive.zip"
-      },
-      "encodingFormat": "application/vnd.apache.parquet",
       "@id": "penmanshiel_hourly_wt08.parquet_fileobject",
-      "@type": "cr:FileObject",
       "name": "penmanshiel_hourly_wt08.parquet",
-      "description": "Canonical Parquet table for the Penmanshiel WT08 dataset."
+      "description": "Canonical Parquet table for the Penmanshiel WT08 dataset.",
+      "contentUrl": "https://zenodo.org/records/23797057/files/penmanshiel_hourly_wt08.parquet",
+      "contentSize": "12386977 B",
+      "encodingFormat": "application/x-parquet",
+      "sha256": "388eaf8f6528ff5cbc2a1881771de2c05e0fa8e8918fcb69a69dbe379b565145"
     },
     {
-      "contentUrl": "README.md",
-      "containedIn": {
-        "@id": "archive.zip"
-      },
-      "encodingFormat": "text/markdown",
+      "@type": "cr:FileObject",
+      "@id": "penmanshiel_hourly_wt08.csv_fileobject",
+      "name": "penmanshiel_hourly_wt08.csv",
+      "description": "CSV mirror of the canonical Penmanshiel WT08 Parquet table.",
+      "contentUrl": "https://zenodo.org/records/23797057/files/penmanshiel_hourly_wt08.csv",
+      "contentSize": "30654834 B",
+      "encodingFormat": "text/csv",
+      "sha256": "a1b46fa6cb36fb3055cd076689b0865358aef09cb2c88f77777477582340cb76"
+    },
+    {
+      "@type": "cr:FileObject",
       "@id": "README.md_fileobject",
-      "@type": "cr:FileObject",
       "name": "README.md",
-      "description": "Dataset documentation and provenance notes for the Penmanshiel WT08 dataset."
+      "description": "Dataset documentation and provenance notes for the Penmanshiel WT08 dataset.",
+      "contentUrl": "https://zenodo.org/records/23797057/files/README.md",
+      "contentSize": "6059 B",
+      "encodingFormat": "text/markdown",
+      "sha256": "cccdfbe6674799faf195ab1c9838156477b89ccf6884430886bdd8e9a8c4a95b"
     },
     {
-      "contentUrl": "checksums.sha256",
-      "containedIn": {
-        "@id": "archive.zip"
-      },
-      "encodingFormat": "text/plain",
-      "@id": "checksums.sha256_fileobject",
       "@type": "cr:FileObject",
+      "@id": "checksums.sha256_fileobject",
       "name": "checksums.sha256",
-      "description": "Byte-level SHA256 checksum manifest for the packaged data files."
+      "description": "Byte-level SHA256 checksum manifest for the packaged data files.",
+      "contentUrl": "https://zenodo.org/records/23797057/files/checksums.sha256",
+      "contentSize": "192 B",
+      "encodingFormat": "text/plain",
+      "sha256": "64cd32d8d9b59c81c0ee72d3183c1fd611db56427256c5dd83b2f29f94e1e5c0"
     }
   ],
   "recordSet": [
@@ -114,7 +217,7 @@
       "field": [
         {
           "dataType": [
-            "sc:Date"
+            "sc:DateTime"
           ],
           "source": {
             "fileObject": {
@@ -1240,48 +1343,5 @@
       "name": "penmanshiel_hourly_wt08.csv",
       "description": "CSV record set for the Penmanshiel WT08 derived hourly time series table. The packaged Parquet file contains the same rows and columns in canonical benchmark form."
     }
-  ],
-  "version": 2,
-  "keywords": [
-    "technique > time series analysis",
-    "subject > science and technology > energy > renewable energy",
-    "subject > science and technology > energy",
-    "subject > science and technology > energy > electricity",
-    "subject > science and technology > engineering"
-  ],
-  "isAccessibleForFree": true,
-  "includedInDataCatalog": {
-    "@type": "sc:DataCatalog",
-    "name": "Kaggle",
-    "url": "https://www.kaggle.com"
-  },
-  "creator": {
-    "@type": "sc:Person",
-    "name": "sensor.fault.bench",
-    "url": "/sensorfaultbench",
-    "image": "https://storage.googleapis.com/kaggle-avatars/thumbnails/default-thumb.png"
-  },
-  "publisher": {
-    "@type": "sc:Organization",
-    "name": "Kaggle",
-    "url": "https://www.kaggle.com/organizations/kaggle",
-    "image": "https://storage.googleapis.com/kaggle-organizations/4/thumbnail.png"
-  },
-  "thumbnailUrl": "https://storage.googleapis.com/kaggle-datasets-images/new-version-temp-images/default-backgrounds-76.png-34185974/dataset-card.png",
-  "dateModified": "2026-05-06T18:16:05.167",
-  "datePublished": "2026-05-06T17:56:20.6554749",
-  "@type": "sc:Dataset",
-  "name": "Penmanshiel WT08 Hourly SCADA Time Series Dataset",
-  "url": "https://www.kaggle.com/datasets/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset/versions/2",
-  "citeAs": "@inproceedings{windmann2026benchmarking,\n  title={Benchmarking Sensor-Fault Robustness in Forecasting},\n  author={Windmann, Alexander and Wittenberg, Philipp and Manca, Gianluca and Dix, Marcel and Brandt, Jens U. and Niggemann, Oliver},\n  booktitle={The Fortieth Annual Conference on Neural Information Processing Systems Evaluations and Datasets Track},\n  year={2026},\n  url={https://neurips.cc/virtual/2026/loc/paris/poster/138912}\n}",
-  "description": "Derived hourly SCADA time series dataset for turbine WT08 from the Penmanshiel wind farm data collection on Zenodo. Source: https://zenodo.org/records/16807304. The record contains a canonical Parquet benchmark file and CSV mirror for forecasting and sensor-fault robustness evaluation. It uses raw WT08 SCADA, removes leakage-prone channels, selects the longest target-continuous segment, aggregates complete hourly bins from six 10-minute rows, and uses Power (kW) as the downstream forecast target.",
-  "dct:conformsTo": "http://mlcommons.org/croissant/RAI/1.0",
-  "rai:dataLimitations": "Single-turbine WT08 subset from one wind farm, not a fleet-wide or universal wind-energy dataset. Hourly aggregation and channel pruning remove information from the raw 10-minute SCADA source. The dataset is not recommended for safety certification, operational control, maintenance scheduling, asset valuation, or deployment without site-specific validation.",
-  "rai:dataBiases": "The dataset has turbine, site, and retained-segment selection bias. Dropping leakage-prone channels, dropping long-gap channels, and selecting one target-continuous segment may remove variables or periods associated with outages or operating states. Hourly averaging smooths short transients and may underrepresent fast operational changes.",
-  "rai:personalSensitiveInformation": "No personal or human-subject records are included. The data describe turbine SCADA measurements.",
-  "rai:dataUseCases": "The dataset is intended for reproducible time series forecasting experiments and sensor-fault robustness benchmarking under the accompanying benchmark protocol. The packaged files do not include sensor-fault labels, corrupted samples, or faulted samples because sensor-fault scenarios are generated by the benchmark code during evaluation. It is not validated for turbine control, maintenance, safety, financial, or operational decision-making.",
-  "rai:dataSocialImpact": "Positive use is transparent benchmarking on renewable-energy SCADA data. The main risk is mistaking a benchmark slice for operationally certified performance evidence.",
-  "rai:hasSyntheticData": false,
-  "prov:wasDerivedFrom": "https://zenodo.org/records/16807304",
-  "prov:wasGeneratedBy": "Derived from WT08 raw SCADA exports covering 2016 through 2022 by using raw WT08 SCADA only, removing cumulative energy counters, availability or contractual indices, controller expectations, and power-curve helper columns, splitting at Power (kW) gaps longer than one day, selecting the longest target-continuous segment, dropping non-target channels with kept-segment gaps longer than 21 days, forward-filling shorter gaps only inside the retained segment, aggregating complete hourly bins from six 10-minute rows, applying no backward fill, exporting the canonical Parquet file, and packaging it with a CSV mirror and SHA256 checksum manifest."
+  ]
 }

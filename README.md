@@ -173,8 +173,8 @@ Datasets:
 
 | Key | Dataset | Domain | Input channels | Forecast targets | Input window | Horizon | Source |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
-| `BeijingAir_Tiantan` | Beijing Air Tiantan | air quality | 12 | 1 | 96 | 6 | [Kaggle record](https://www.kaggle.com/datasets/sensorfaultbench/beijing-air-tiantan-pm2-5-time-series-dataset), CC BY-SA 4.0 |
-| `Penmanshiel_Hourly_WT08` | Penmanshiel WT08 | wind turbine SCADA | 65 | 1 | 96 | 6 | [Kaggle record](https://www.kaggle.com/datasets/sensorfaultbench/penmanshiel-wt08-hourly-scada-time-series-dataset), CC BY-SA 4.0 |
+| `BeijingAir_Tiantan` | Beijing Air Tiantan | air quality | 12 | 1 | 96 | 6 | [Zenodo record](https://doi.org/10.5281/zenodo.23797045), CC BY-SA 4.0 |
+| `Penmanshiel_Hourly_WT08` | Penmanshiel WT08 | wind turbine SCADA | 65 | 1 | 96 | 6 | [Zenodo record](https://doi.org/10.5281/zenodo.23797057), CC BY-SA 4.0 |
 | `ETTh1` | ETTh1 | electricity transformer telemetry | 7 | 7 | 96 | 96 | [ETT archive](https://github.com/zhouhaoyi/ETDataset/tree/main/ETT-small), CC BY-ND 4.0 |
 | `traffic` | Traffic | freeway lane occupancy | 862 | 862 | 96 | 96 | [THUML CSV](https://huggingface.co/datasets/thuml/Time-Series-Library/blob/main/traffic/traffic.csv), CC BY 4.0 |
 
