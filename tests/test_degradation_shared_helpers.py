@@ -9,6 +9,8 @@ from visualizations.semantics import (
     require_plot_semantics_mapping,
 )
 from utils.parsing import (
+    build_seeded_degradation_artifact_prefix,
+    build_seeded_eval_input_artifact_prefix,
     format_fixed_channel_fraction_token,
     robustness_scoring_semantics_for_severity_distribution,
 )
@@ -17,6 +19,7 @@ from utils.scoring import (
     build_fixed_channel_fraction_artifact_prefix,
     build_fixed_channel_fraction_context_signature,
     build_fixed_channel_fraction_metric_key,
+    download_validated_degradation_artifact_bundle,
     download_validated_fixed_channel_fraction_artifact_bundle,
     build_degradation_scenario_metric_key,
     extract_required_degradation_scenario_metrics,
@@ -1208,6 +1211,75 @@ class _ArtifactClient:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_text(self.files[artifact_path], encoding="utf-8")
         return str(local_path)
+
+
+def test_degradation_artifact_bundle_reads_back_the_written_errors():
+    # Errors that the default pandas parser reads one unit in the last place
+    # off on some platforms after the CSV round trip of the logged artifacts.
+    clean_errors = [9.041999816894533, 240.27000427246094]
+    pert_errors = [3.6893719296273355, 1852.2606981658873]
+    err_clean_global = sum(clean_errors) / len(clean_errors)
+    err_pert = sum(pert_errors) / len(pert_errors)
+    clean_df = pd.DataFrame(
+        {"sample_id": [0, 1], "source_sample_idx": [3, 7], "err_clean": clean_errors}
+    )
+    scenario_samples_df = pd.DataFrame(
+        {
+            "sample_id": [0, 1],
+            "source_sample_idx": [3, 7],
+            "pert_idx": [0, 0],
+            "scenario": ["drift", "drift"],
+            "severity": [0.2, 0.4],
+            "err_pert": pert_errors,
+        }
+    )
+    scenario_summary_df = pd.DataFrame(
+        [
+            {
+                "pert_idx": 0,
+                "scenario": "drift",
+                "n_test_samples": 2,
+                "err_clean_global": err_clean_global,
+                "err_pert": err_pert,
+                "err_pert_CI_lo": err_pert,
+                "err_pert_CI_hi": err_pert,
+                "D": err_pert / err_clean_global,
+                "D_CI_lo": err_pert / err_clean_global,
+                "D_CI_hi": err_pert / err_clean_global,
+            }
+        ]
+    )
+    eval_input_prefix = build_seeded_eval_input_artifact_prefix(
+        test_metric="MSE",
+        eval_data_seed=7,
+    )
+    degradation_prefix = build_seeded_degradation_artifact_prefix(
+        test_metric="MSE",
+        eval_data_seed=7,
+    )
+    client = _ArtifactClient(
+        {
+            f"{eval_input_prefix}/clean_test_samples.csv": clean_df.to_csv(index=False),
+            f"{degradation_prefix}/scenario_samples.csv": scenario_samples_df.to_csv(
+                index=False
+            ),
+            f"{degradation_prefix}/scenario_summary.csv": scenario_summary_df.to_csv(
+                index=False
+            ),
+        }
+    )
+
+    clean, scenario_samples, _ = download_validated_degradation_artifact_bundle(
+        client,
+        run_id="run_round_trip",
+        test_metric="MSE",
+        eval_data_seed=7,
+        expected_idx_to_name={0: "drift"},
+        context_name="degradation_bundle",
+    )
+
+    assert clean["err_clean"].tolist() == clean_errors
+    assert scenario_samples["err_pert"].tolist() == pert_errors
 
 
 def _canonical_context_signature(severity_distribution: str) -> str:

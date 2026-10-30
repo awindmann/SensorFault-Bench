@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.datasets import DATASET_REGISTRY, ResolvedDatasetSpec
 from config_loader import load_defaults
+from utils.parsing import read_csv_correctly_rounded
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ ETTH1 = DerivedDatasetContract(
     channel_count=7,
     continuous_channel_count=7,
     discrete_channel_count=0,
-    content_sha256="f6183ff793de4f47893e0edc709f8b94766b391ef3b36ccc51e3458655f3863f",
+    content_sha256="47bf6a7f383b97d7c115d7cdab4fb4e29cf5d4cdd772a63bc35be3125a4baf1f",
     source_label="ETTh1.csv",
     source_url="https://github.com/zhouhaoyi/ETDataset/tree/main/ETT-small",
     zenodo_url=None,
@@ -234,7 +235,7 @@ def read_dataset_frame(path: Path) -> pd.DataFrame:
     if suffix == ".parquet":
         return pd.read_parquet(path)
     if suffix == ".csv":
-        return pd.read_csv(path)
+        return read_csv_correctly_rounded(path)
     raise ValueError(
         f"Benchmark dataset file format not supported for {path.name!r}. "
         "Expected .csv or .parquet."

@@ -1,9 +1,11 @@
 import argparse
 import json
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -30,6 +32,9 @@ from scripts.benchmark_dataset_contracts import (
     validate_processed_file,
 )
 from scripts.preprocess_beijing_air_tiantan import prepare_from_raw as prepare_beijing
+from scripts.preprocess_penmanshiel_hourly_wt08 import (
+    _load_turbine_data_from_zip as load_penmanshiel_turbine_data,
+)
 from scripts.preprocess_penmanshiel_hourly_wt08 import prepare_from_raw as prepare_penmanshiel
 from scripts.preprocess_traffic import prepare_from_raw as prepare_traffic
 from utils.parsing import normalize_data_root
@@ -366,7 +371,7 @@ def test_etth1_contract_validates_canonical_csv(tmp_path, capsys, monkeypatch):
     contract = replace(
         contract,
         content_sha256=benchmark_dataset_contracts.sha256_dataframe_content(
-            pd.read_csv(output_path),
+            benchmark_dataset_contracts.read_dataset_frame(output_path),
         ),
     )
     monkeypatch.setitem(benchmark_dataset_contracts.CONTRACTS_BY_KEY, "ETTh1", contract)
@@ -387,6 +392,77 @@ def test_etth1_contract_validates_canonical_csv(tmp_path, capsys, monkeypatch):
     assert payload["rows"] == 2
     assert "benchmark_file_sha256" not in payload
     assert payload["content_sha256"] == contract.content_sha256
+
+
+def _read_etth1_with_data_module(csv_path: Path) -> pd.DataFrame:
+    dataset_spec = resolve_with_defaults(
+        "ETTh1",
+        [],
+        data_root=csv_path.parent.as_posix(),
+    )[0]
+    data_module = TSDataModule(
+        dataset_spec=dataset_spec,
+        num_workers=0,
+        perturbation_channel_fraction_max=0.5,
+        perturbation_scenarios=("drift",),
+        perturbation_severity_distribution="uniform",
+    )
+    return data_module._read_dataframe()
+
+
+@pytest.mark.parametrize(
+    "read_frame",
+    (benchmark_dataset_contracts.read_dataset_frame, _read_etth1_with_data_module),
+    ids=("validation", "data_module"),
+)
+def test_csv_dataset_values_parse_to_correctly_rounded_floats(tmp_path, read_frame):
+    # ETTh1 values that the default pandas parser reads one unit in the last
+    # place off on some platforms.
+    values = ["9.041999816894533", "9.175999641418457", "9.708000183105467"]
+    channels = ["HUFL", "HULL", "MUFL", "MULL", "LUFL", "LULL", "OT"]
+    csv_path = tmp_path / "ETTh1.csv"
+    csv_path.write_text(
+        ",".join(["date", *channels])
+        + "\n"
+        + "".join(
+            f"2016-07-01 0{hour}:00:00," + ",".join([value] * len(channels)) + "\n"
+            for hour, value in enumerate(values)
+        ),
+        encoding="utf-8",
+    )
+
+    frame = read_frame(csv_path)
+
+    assert frame["OT"].tolist() == [float(value) for value in values]
+
+
+def test_penmanshiel_loader_parses_greenbyte_csv_columns(tmp_path):
+    zip_path = tmp_path / "Penmanshiel_SCADA_2016_WT01-10_0000.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr(
+            "Turbine_Data_Penmanshiel_08_2016-01-01_-_2017-01-01_0000.csv",
+            "# Turbine data export\n"
+            "# Date and time,Wind speed (m/s),Power (kW),Status code,Comment\n"
+            "2016-01-01 00:10:00,240.27000427246094,NULL,1,ok\n"
+            "2016-01-01 00:20:00,3.6893719296273355,1852.2606981658873,2,ok\n",
+        )
+
+    (frame,) = load_penmanshiel_turbine_data(zip_path)
+
+    assert frame.columns.tolist() == [
+        "Date and time",
+        "Wind speed (m/s)",
+        "Power (kW)",
+        "Status code",
+    ]
+    assert frame["Date and time"].tolist() == [
+        pd.Timestamp("2016-01-01 00:10:00"),
+        pd.Timestamp("2016-01-01 00:20:00"),
+    ]
+    assert frame["Wind speed (m/s)"].tolist() == [240.27000427246097, 3.689371929627335]
+    assert np.isnan(frame["Power (kW)"].iloc[0])
+    assert frame["Power (kW)"].iloc[1] == 1852.260698165887
+    assert frame["Status code"].dtype == np.int64
 
 
 def test_checksum_validation_uses_content_not_parquet_container_bytes(tmp_path):

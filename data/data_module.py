@@ -32,6 +32,7 @@ from utils.parsing import (
     parse_train_fault_profiles,
     parse_train_perturbation_probability,
     parse_train_perturbation_severity_max,
+    read_csv_correctly_rounded,
     resolve_train_perturbation_profile_config,
 )
 
@@ -570,9 +571,9 @@ class TSDataModule(pl.LightningDataModule):
                     frame = pd.read_parquet(self.file_path)
             elif self.file_path.endswith(".csv"):
                 if self.file_path.startswith('s3://'):
-                    frame = pd.read_csv(self.file_path, nrows=nrows, storage_options=self.storage_options)
+                    frame = read_csv_correctly_rounded(self.file_path, nrows=nrows, storage_options=self.storage_options)
                 else:
-                    frame = pd.read_csv(self.file_path, nrows=nrows)
+                    frame = read_csv_correctly_rounded(self.file_path, nrows=nrows)
                 frame = self._set_csv_datetime_index(frame)
             else:
                 raise ValueError("File format not supported.")

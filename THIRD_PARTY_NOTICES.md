@@ -178,6 +178,23 @@ SOFTWARE.
   The `fault_augmentation` training recipe, scheduling, and benchmark method are
   repository-owned.
 
+### pandas CSV Parsing
+
+- Used by: `scripts/preprocess_penmanshiel_hourly_wt08.py`.
+- Project: pandas.
+- Reference: The pandas development team, 2025.
+- Repo:
+  <https://github.com/pandas-dev/pandas/blob/v2.3.3/pandas/_libs/src/parser/tokenizer.c>
+- Upstream package: `pandas==2.3.3`.
+- Upstream copyright: Copyright (c) 2008-2011, AQR Capital Management, LLC,
+  Lambda Foundry, Inc. and PyData Development Team. Copyright (c) 2011-2023,
+  Open source contributors.
+- Upstream license: BSD-3-Clause.
+- Modification notice: the float parser `precise_xstrtod`, as built with fused
+  multiply-adds, and the column types that `read_csv` infers are reimplemented
+  in NumPy integer arithmetic, so that a rebuild of the Penmanshiel file gives
+  the published values on every platform.
+
 ## Dataset Sources
 
 Dataset acquisition and terms are documented in `data/README.md`. The benchmark

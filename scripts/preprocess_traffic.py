@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.datasets import DATASET_REGISTRY
 from scripts.benchmark_dataset_contracts import TRAFFIC, run_contract_cli
+from utils.parsing import read_csv_correctly_rounded
 
 
 def _traffic_raw_csv(raw_source: Path) -> Path:
@@ -60,7 +61,7 @@ def _validate_hourly_datetimes(datetimes: pd.Series) -> None:
 
 def prepare_from_raw(raw_source: Path, output_path: Path) -> Path:
     raw_csv = _traffic_raw_csv(raw_source)
-    frame = pd.read_csv(raw_csv)
+    frame = read_csv_correctly_rounded(raw_csv)
     expected_columns = _expected_columns()
     actual_columns = frame.columns.tolist()
     if actual_columns != expected_columns:

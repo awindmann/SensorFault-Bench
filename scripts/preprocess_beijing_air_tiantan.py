@@ -12,6 +12,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.benchmark_dataset_contracts import BEIJING_AIR_TIANTAN, run_contract_cli
+from utils.parsing import read_csv_correctly_rounded
 
 
 SELECTED_STATION = "Tiantan"
@@ -57,7 +58,7 @@ def _load_tiantan_raw(raw_source: Path) -> pd.DataFrame:
             raise ValueError(
                 "Beijing Air Tiantan preprocessing requires the Tiantan station CSV."
             )
-        return pd.read_csv(raw_source)
+        return read_csv_correctly_rounded(raw_source)
     if raw_source.is_file() and raw_source.suffix.lower() == ".zip":
         with zipfile.ZipFile(raw_source) as archive:
             matches = [
@@ -70,12 +71,12 @@ def _load_tiantan_raw(raw_source: Path) -> pd.DataFrame:
                     f"Expected exactly one Tiantan CSV in {raw_source}, found {matches}."
                 )
             with archive.open(matches[0]) as handle:
-                return pd.read_csv(handle)
+                return read_csv_correctly_rounded(handle)
     if raw_source.is_dir():
         csv_matches = sorted(raw_source.rglob("PRSA_Data_Tiantan_*.csv"))
         zip_matches = sorted(raw_source.rglob("*.zip"))
         if len(csv_matches) == 1:
-            return pd.read_csv(csv_matches[0])
+            return read_csv_correctly_rounded(csv_matches[0])
         if len(csv_matches) > 1:
             raise ValueError(
                 f"Expected one Tiantan CSV under {raw_source}, found {csv_matches}."
