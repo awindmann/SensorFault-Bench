@@ -69,11 +69,8 @@ LEAKAGE_RULES = {
         ),
     },
 }
-# The published file was built with pandas on Apple Silicon, whose CSV float
-# parser accumulates up to 17 digits with one fused multiply-add per digit and
-# then scales by a power of ten. Builds without fused multiply-adds round each
-# digit step twice. Integer arithmetic reproduces the published parse on every
-# platform.
+# Constants and token forms of the pandas CSV parsing that parse_scada_column
+# reproduces.
 PARSER_MAX_DIGITS = 17
 POWERS_OF_TEN = np.array([float(f"1e{power}") for power in range(309)])
 FLOAT_TOKEN_PATTERN = (
@@ -81,6 +78,7 @@ FLOAT_TOKEN_PATTERN = (
     r"(?:[eE](?P<exponent>[+-]?\d{1,17}))?\s*$"
 )
 INFINITY_TOKEN_PATTERN = r"(?i)[+-]?inf(?:inity)?"
+BOOLEAN_TOKEN_PATTERN = r"(?i)true|false"
 
 
 def _registered_channels() -> list[str]:
@@ -142,13 +140,38 @@ def _extract_header_from_greenbyte_csv(
 
 
 def parse_scada_column(tokens: pd.Series) -> pd.Series | None:
-    """Parse raw SCADA text as the published build did, or return None for text."""
+    """Parse one raw SCADA column exactly as the published Penmanshiel file was parsed.
+
+    The published file was built with pandas on Apple Silicon. The default CSV
+    float parser of pandas accumulates up to 17 digits and then scales by a
+    power of ten. On Apple Silicon, each digit step is one fused multiply-add,
+    whereas builds without fused multiply-adds, such as on x86-64, round each
+    step twice. Some long decimals of the raw files therefore get a different
+    last bit, so ``pd.read_csv`` on such a platform does not reproduce the
+    published file, and a correctly rounded parse reproduces it on no platform.
+
+    This function repeats the published parse in integer arithmetic, which gives
+    the same values on every platform, and follows the column types that pandas
+    infers. It returns None for a column that pandas reads as text, which the
+    loader drops. Boolean columns and integers outside the int64 range raise an
+    error, because their pandas handling is not reproduced. A rebuild with
+    ``--require-checksums`` confirms the result against the recorded content
+    checksum.
+
+    Reference: The pandas development team, 2025
+    Repo: https://github.com/pandas-dev/pandas/blob/v2.3.3/pandas/_libs/src/parser/tokenizer.c
+    """
     present = tokens.notna().to_numpy()
     infinite = np.zeros(len(tokens), dtype=bool)
     infinite[present] = tokens[present].str.fullmatch(INFINITY_TOKEN_PATTERN).to_numpy()
     numeric = present & ~infinite
     parts = tokens[numeric].str.extract(FLOAT_TOKEN_PATTERN)
     if parts["integer"].isna().any():
+        if present.all() and tokens.str.fullmatch(BOOLEAN_TOKEN_PATTERN).all():
+            raise ValueError(
+                f"Column {tokens.name!r} holds boolean values, which the reproduced "
+                "parse does not support."
+            )
         return None
     digits = (parts["integer"] + parts["fraction"].fillna("")).str.slice(
         0, PARSER_MAX_DIGITS
@@ -156,11 +179,26 @@ def parse_scada_column(tokens: pd.Series) -> pd.Series | None:
     digit_count = digits.str.len().to_numpy()
     if (digit_count == 0).any():
         return None
-    # A complete column of integers keeps exact integer values.
-    if present.all() and not infinite.any():
-        if parts["fraction"].isna().all() and parts["exponent"].isna().all():
-            integers = np.array([int(token) for token in tokens], dtype=np.int64)
+    # pandas reads integers beyond int64 as uint64 or as text, depending on the
+    # other values of the column and their order, so such columns stop the rebuild.
+    integer_like = (parts["fraction"].isna() & parts["exponent"].isna()).to_numpy()
+    long_integers = tokens[numeric][
+        integer_like & (parts["integer"].str.len().to_numpy() >= 19)
+    ]
+    int64_range = np.iinfo(np.int64)
+    if any(not int64_range.min <= int(token) <= int64_range.max for token in long_integers):
+        raise ValueError(
+            f"Column {tokens.name!r} holds integers outside the int64 range, which "
+            "the reproduced parse does not support."
+        )
+    # A column of integers keeps exact integer values, as floats if values are missing.
+    if not infinite.any() and integer_like.all():
+        integers = np.array([int(token) for token in tokens[numeric]], dtype=np.int64)
+        if present.all():
             return pd.Series(integers, index=tokens.index, name=tokens.name)
+        parsed = np.full(len(tokens), np.nan)
+        parsed[numeric] = integers.astype(np.float64)
+        return pd.Series(parsed, index=tokens.index, name=tokens.name)
     integer_count = parts["integer"].str.len().to_numpy()
     used_integer_count = np.minimum(integer_count, PARSER_MAX_DIGITS)
     exponent = (
@@ -168,7 +206,7 @@ def parse_scada_column(tokens: pd.Series) -> pd.Series | None:
         + (integer_count - used_integer_count)
         - (digit_count - used_integer_count)
     )
-    # The parser reports a range error for such values and keeps the column as text.
+    # pandas reports a range error for such values and reads the column as text.
     if (exponent > 308).any():
         return None
     digit_codes = np.array(digits.tolist(), dtype=f"U{PARSER_MAX_DIGITS}")
@@ -220,6 +258,8 @@ def _load_turbine_data_from_zip(zip_path: Path) -> list[pd.DataFrame]:
             )
         for csv_name in sorted(turbine_csvs):
             header = _extract_header_from_greenbyte_csv(archive, csv_name)
+            # Values stay text here so that parse_scada_column can reproduce the
+            # parse of the published file.
             with archive.open(csv_name) as handle:
                 frame = pd.read_csv(
                     handle,

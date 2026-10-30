@@ -37,6 +37,7 @@ KNOWN_PUBLIC_GITHUB_REPOS = {
     "luodhhh/moderntcn",
     "madrylab/mnist_challenge",
     "modestyachts/imagenet-testbed",
+    "pandas-dev/pandas",
     "tetrzim/robust-probabilistic-forecasting",
     "thuml/time-series-library",
     "ts-kim/revin",
